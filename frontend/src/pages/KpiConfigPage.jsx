@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
+import { vietnamTodayIsoDate } from "../utils/vietnamTime";
 
 export function KpiConfigPage({ data, selectedBranchId }) {
   const [baseCfg, setBaseCfg] = useState(null);
@@ -27,7 +28,7 @@ export function KpiConfigPage({ data, selectedBranchId }) {
     const staff = branchStaff.find((s) => s.id === Number(selectedStaffId));
     const fallbackCfg = JSON.parse(JSON.stringify(baseCfg[staff.type]));
     api.getStaffKpiSetting(selectedStaffId).then((setting) => {
-      setStartDate(setting?.startDate || new Date().toISOString().slice(0, 10));
+      setStartDate(setting?.startDate || vietnamTodayIsoDate());
       setEndDate(setting?.endDate || "");
       setFormCfg(setting?.config || fallbackCfg);
     });

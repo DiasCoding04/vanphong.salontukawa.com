@@ -1,5 +1,5 @@
 export function DashboardPage({ data }) {
-  const activeStaff = data.staff.filter((s) => s.status === "active").length;
+  const activeStaff = data.staff.filter((s) => s.status === "working").length;
   const mainStaff = data.staff.filter((s) => s.type === "main").length;
   const assistantStaff = data.staff.filter((s) => s.type === "assistant").length;
 

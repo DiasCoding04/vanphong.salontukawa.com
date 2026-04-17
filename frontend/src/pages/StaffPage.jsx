@@ -1,32 +1,39 @@
 import { useMemo, useState } from "react";
 import { api } from "../api/client";
+import { vietnamTodayIsoDate } from "../utils/vietnamTime";
 
-const initialForm = {
-  id: null,
-  name: "",
-  type: "main",
-  baseSalary: "",
-  holdRemaining: "",
-  accountNumber: "",
-  status: "active",
-  startDate: new Date().toISOString().slice(0, 10)
-};
+function newStaffForm() {
+  return {
+    id: null,
+    name: "",
+    type: "main",
+    baseSalary: "",
+    holdRemaining: "",
+    accountNumber: "",
+    status: "working",
+    startDate: vietnamTodayIsoDate(),
+    endDate: ""
+  };
+}
 
 export function StaffPage({ data, selectedBranchId }) {
-  const [form, setForm] = useState(initialForm);
+  const [form, setForm] = useState(() => newStaffForm());
   const [error, setError] = useState("");
 
-  const filteredStaff = useMemo(
-    () => data.staff.filter((s) => s.branchId === selectedBranchId),
-    [data.staff, selectedBranchId]
-  );
+  const { activeStaff, leftStaff } = useMemo(() => {
+    const branch = data.staff.filter((s) => s.branchId === selectedBranchId);
+    return {
+      activeStaff: branch.filter((s) => s.status !== "left"),
+      leftStaff: branch.filter((s) => s.status === "left")
+    };
+  }, [data.staff, selectedBranchId]);
 
   function setField(key, value) {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
 
   function resetForm() {
-    setForm({ ...initialForm, startDate: new Date().toISOString().slice(0, 10) });
+    setForm(newStaffForm());
     setError("");
   }
 
@@ -43,6 +50,14 @@ export function StaffPage({ data, selectedBranchId }) {
       setError("Vui l\u00f2ng nh\u1eadp Ti\u1ec1n giam l\u01b0\u01a1ng c\u00f2n l\u1ea1i h\u1ee3p l\u1ec7.");
       return;
     }
+    if (form.status === "left" && !form.endDate) {
+      setError("Vui l\u00f2ng nh\u1eadp Ng\u00e0y k\u1ebft th\u00fac khi nh\u00e2n vi\u00ean \u0111\u00e3 ngh\u1ec9.");
+      return;
+    }
+    if (form.endDate && form.endDate < form.startDate) {
+      setError("Ng\u00e0y k\u1ebft th\u00fac ph\u1ea3i l\u1edbn h\u01a1n ho\u1eb7c b\u1eb1ng Ng\u00e0y b\u1eaft \u0111\u1ea7u.");
+      return;
+    }
 
     const payload = {
       name: form.name.trim(),
@@ -52,7 +67,8 @@ export function StaffPage({ data, selectedBranchId }) {
       holdRemaining: Number(form.holdRemaining),
       accountNumber: form.accountNumber.trim(),
       status: form.status,
-      startDate: form.startDate
+      startDate: form.startDate,
+      endDate: form.status === "left" ? form.endDate : null
     };
 
     if (form.id) await api.updateStaff(form.id, payload);
@@ -70,8 +86,9 @@ export function StaffPage({ data, selectedBranchId }) {
       baseSalary: String(staff.baseSalary || ""),
       holdRemaining: String(staff.holdRemaining ?? 0),
       accountNumber: staff.accountNumber || "",
-      status: staff.status || "active",
-      startDate: staff.startDate || new Date().toISOString().slice(0, 10)
+      status: staff.status || "working",
+      startDate: staff.startDate || vietnamTodayIsoDate(),
+      endDate: staff.endDate || ""
     });
     setError("");
   }
@@ -81,6 +98,62 @@ export function StaffPage({ data, selectedBranchId }) {
     await api.deleteStaff(staff.id);
     await data.reload();
     if (form.id === staff.id) resetForm();
+  }
+
+  function renderStaffTable(title, rows, showEndDate) {
+    return (
+      <div className="card">
+        <div className="page-header">
+          <h3>{title} ({rows.length})</h3>
+        </div>
+        <div className="table-scroll">
+          <table className="data-table">
+            <colgroup>
+              <col style={{ width: "14%" }} />
+              <col style={{ width: "10%" }} />
+              <col style={{ width: "14%" }} />
+              <col style={{ width: "12%" }} />
+              <col style={{ width: "12%" }} />
+              <col style={{ width: "10%" }} />
+              <col style={{ width: "10%" }} />
+              <col style={{ width: "10%" }} />
+              <col style={{ width: "8%" }} />
+            </colgroup>
+            <thead>
+              <tr>
+                <th>{"T\u00ean"}</th>
+                <th>{"Lo\u1ea1i"}</th>
+                <th>{"Chi nh\u00e1nh"}</th>
+                <th>{"L\u01b0\u01a1ng c\u1ee9ng"}</th>
+                <th>{"Giam l\u01b0\u01a1ng c\u00f2n l\u1ea1i"}</th>
+                <th>STK</th>
+                <th>{"Ng\u00e0y b\u1eaft \u0111\u1ea7u"}</th>
+                <th>{"Ng\u00e0y k\u1ebft th\u00fac"}</th>
+                <th className="col-actions">{"Thao t\u00e1c"}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((s) => (
+                <tr key={s.id}>
+                  <td>{s.name}</td>
+                  <td><span className={`badge ${s.type === "main" ? "badge-blue" : "badge-yellow"}`}>{s.type === "main" ? "Th\u1ee3 ch\u00ednh" : "Th\u1ee3 ph\u1ee5"}</span></td>
+                  <td>{data.branches.find((b) => b.id === s.branchId)?.name || "-"}</td>
+                  <td>{new Intl.NumberFormat("vi-VN").format(s.baseSalary)} VND</td>
+                  <td>{new Intl.NumberFormat("vi-VN").format(s.holdRemaining || 0)} VND</td>
+                  <td>{s.accountNumber || "-"}</td>
+                  <td>{s.startDate || "-"}</td>
+                  <td>{showEndDate ? (s.endDate || "-") : "-"}</td>
+                  <td className="col-actions">
+                    <button className="icon-btn" title={"S\u1eeda"} onClick={() => handleEdit(s)}>{"Sua"}</button>
+                    <button className="icon-btn danger" title={"X\u00f3a"} onClick={() => handleDelete(s)}>{"Xoa"}</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -126,8 +199,26 @@ export function StaffPage({ data, selectedBranchId }) {
           </label>
 
           <label className="field">
+            <span className="muted">{"Tr\u1ea1ng th\u00e1i"}</span>
+            <select value={form.status} onChange={(e) => setField("status", e.target.value)}>
+              <option value="working">{"\u0110i l\u00e0m"}</option>
+              <option value="left">{"\u0110\u00e3 ngh\u1ec9"}</option>
+            </select>
+          </label>
+
+          <label className="field">
             <span className="muted">{"Ng\u00e0y b\u1eaft \u0111\u1ea7u"}</span>
             <input type="date" value={form.startDate} onChange={(e) => setField("startDate", e.target.value)} />
+          </label>
+
+          <label className="field">
+            <span className="muted">{"Ng\u00e0y k\u1ebft th\u00fac"} {form.status === "left" ? "*" : ""}</span>
+            <input
+              type="date"
+              value={form.endDate}
+              disabled={form.status !== "left"}
+              onChange={(e) => setField("endDate", e.target.value)}
+            />
           </label>
         </div>
 
@@ -138,40 +229,8 @@ export function StaffPage({ data, selectedBranchId }) {
         </div>
       </div>
 
-      <div className="card">
-        <div className="page-header"><h3>{"Danh s\u00e1ch nh\u00e2n s\u1ef1"} ({filteredStaff.length})</h3></div>
-        <table>
-          <thead>
-            <tr>
-              <th>{"T\u00ean"}</th>
-              <th>{"Lo\u1ea1i"}</th>
-              <th>{"Chi nh\u00e1nh"}</th>
-              <th>{"L\u01b0\u01a1ng c\u1ee9ng"}</th>
-              <th>{"Giam l\u01b0\u01a1ng c\u00f2n l\u1ea1i"}</th>
-              <th>STK</th>
-              <th>{"Tr\u1ea1ng th\u00e1i"}</th>
-              <th>{"Thao t\u00e1c"}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredStaff.map((s) => (
-              <tr key={s.id}>
-                <td>{s.name}</td>
-                <td><span className={`badge ${s.type === "main" ? "badge-blue" : "badge-yellow"}`}>{s.type === "main" ? "Th\u1ee3 ch\u00ednh" : "Th\u1ee3 ph\u1ee5"}</span></td>
-                <td>{data.branches.find((b) => b.id === s.branchId)?.name || "-"}</td>
-                <td>{new Intl.NumberFormat("vi-VN").format(s.baseSalary)} VND</td>
-                <td>{new Intl.NumberFormat("vi-VN").format(s.holdRemaining || 0)} VND</td>
-                <td>{s.accountNumber || "-"}</td>
-                <td><span className={`badge ${s.status === "active" ? "badge-green" : "badge-red"}`}>{s.status}</span></td>
-                <td>
-                  <button className="icon-btn" title={"S\u1eeda"} onClick={() => handleEdit(s)}>{"Sua"}</button>
-                  <button className="icon-btn danger" title={"X\u00f3a"} onClick={() => handleDelete(s)}>{"Xoa"}</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {renderStaffTable("Nhân sự đang hoạt động", activeStaff, false)}
+      {renderStaffTable("Nhân sự đã nghỉ", leftStaff, true)}
     </>
   );
 }

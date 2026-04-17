@@ -29,8 +29,9 @@ async function initDb() {
     type TEXT NOT NULL CHECK(type IN ('main','assistant')),
     branch_id INTEGER NOT NULL,
     base_salary INTEGER NOT NULL,
-    status TEXT NOT NULL DEFAULT 'active',
+    status TEXT NOT NULL DEFAULT 'working',
     start_date TEXT NOT NULL,
+    end_date TEXT,
     FOREIGN KEY(branch_id) REFERENCES branches(id)
   )`);
 
@@ -41,6 +42,11 @@ async function initDb() {
   if (!staffCols.includes("hold_remaining")) {
     await run("ALTER TABLE staff ADD COLUMN hold_remaining INTEGER NOT NULL DEFAULT 0");
   }
+  if (!staffCols.includes("end_date")) {
+    await run("ALTER TABLE staff ADD COLUMN end_date TEXT");
+  }
+  await run("UPDATE staff SET status = 'working' WHERE status = 'active'");
+  await run("UPDATE staff SET status = 'left' WHERE status = 'inactive'");
 
   await run(`CREATE TABLE IF NOT EXISTS attendance (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,6 +62,14 @@ async function initDb() {
     UNIQUE(staff_id, date),
     FOREIGN KEY(staff_id) REFERENCES staff(id)
   )`);
+
+  const attendanceCols = await runAndGetColsForTable("attendance");
+  if (attendanceCols.length && !attendanceCols.includes("chemical_bookings_json")) {
+    await run("ALTER TABLE attendance ADD COLUMN chemical_bookings_json TEXT DEFAULT '[]'");
+  }
+  if (attendanceCols.length && !attendanceCols.includes("wash_bookings_json")) {
+    await run("ALTER TABLE attendance ADD COLUMN wash_bookings_json TEXT DEFAULT '[]'");
+  }
 
   await run(`CREATE TABLE IF NOT EXISTS salary_adjustments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -90,6 +104,22 @@ async function initDb() {
     FOREIGN KEY(staff_id) REFERENCES staff(id)
   )`);
 
+  await run(`CREATE TABLE IF NOT EXISTS staff_personal_info (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    staff_id INTEGER NOT NULL UNIQUE,
+    phone TEXT,
+    national_id TEXT,
+    birth_date TEXT,
+    hometown TEXT,
+    cccd_image_filename TEXT,
+    FOREIGN KEY(staff_id) REFERENCES staff(id)
+  )`);
+
+  const spiCols = await runAndGetColsForTable("staff_personal_info");
+  if (spiCols.length && !spiCols.includes("cccd_image_filename")) {
+    await run("ALTER TABLE staff_personal_info ADD COLUMN cccd_image_filename TEXT");
+  }
+
   const hasBranches = await get("SELECT COUNT(*) AS total FROM branches");
   if (hasBranches.total === 0) {
     await run("INSERT INTO branches (name) VALUES (?), (?)", ["Chi nhánh Quận 12", "Chi nhánh Tân Bình"]);
@@ -98,13 +128,13 @@ async function initDb() {
   const hasStaff = await get("SELECT COUNT(*) AS total FROM staff");
   if (hasStaff.total === 0) {
     await run(
-      `INSERT INTO staff (name, type, branch_id, base_salary, status, start_date, account_number, hold_remaining)
+      `INSERT INTO staff (name, type, branch_id, base_salary, status, start_date, end_date, account_number, hold_remaining)
        VALUES
-       ('Nguyễn Văn An', 'main', 1, 5000000, 'active', '2024-01-01', '001100001', 2000000),
-       ('Trần Thị Bình', 'main', 1, 5500000, 'active', '2024-02-01', '001100002', 1500000),
-       ('Lê Hoàng Cường', 'assistant', 1, 4000000, 'active', '2024-03-01', '001100003', 1000000),
-       ('Phạm Thị Dung', 'assistant', 2, 4200000, 'active', '2024-01-15', '001100004', 1200000),
-       ('Hoàng Văn Em', 'main', 2, 5000000, 'active', '2024-04-01', '001100005', 1800000)`
+       ('Nguyễn Văn An', 'main', 1, 5000000, 'working', '2024-01-01', NULL, '001100001', 2000000),
+       ('Trần Thị Bình', 'main', 1, 5500000, 'working', '2024-02-01', NULL, '001100002', 1500000),
+       ('Lê Hoàng Cường', 'assistant', 1, 4000000, 'working', '2024-03-01', NULL, '001100003', 1000000),
+       ('Phạm Thị Dung', 'assistant', 2, 4200000, 'working', '2024-01-15', NULL, '001100004', 1200000),
+       ('Hoàng Văn Em', 'main', 2, 5000000, 'working', '2024-04-01', NULL, '001100005', 1800000)`
     );
   }
 
@@ -118,5 +148,10 @@ module.exports = { initDb };
 
 async function runAndGetCols() {
   const rowCols = await get("SELECT group_concat(name, ',') AS cols FROM pragma_table_info('staff')");
+  return (rowCols?.cols || "").split(",").filter(Boolean);
+}
+
+async function runAndGetColsForTable(tableName) {
+  const rowCols = await get(`SELECT group_concat(name, ',') AS cols FROM pragma_table_info('${tableName}')`);
   return (rowCols?.cols || "").split(",").filter(Boolean);
 }
