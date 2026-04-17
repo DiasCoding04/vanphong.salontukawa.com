@@ -1,5 +1,6 @@
-﻿import { useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useData } from "./hooks/useData";
+import { api } from "./api/client";
 import { DashboardPage } from "./pages/DashboardPage";
 import { StaffPage } from "./pages/StaffPage";
 import { AttendancePage } from "./pages/AttendancePage";
@@ -9,6 +10,7 @@ import { KpiConfigPage } from "./pages/KpiConfigPage";
 
 const tabs = [
   { key: "dashboard", label: "Tổng quan" },
+  { key: "branches", label: "Quản lý chi nhánh" },
   { key: "staff", label: "Nhân sự" },
   { key: "attendance", label: "Chấm công" },
   { key: "kpi", label: "KPI tháng" },
@@ -18,16 +20,77 @@ const tabs = [
 
 function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
+  const [selectedBranchId, setSelectedBranchId] = useState(null);
+  const [newBranchName, setNewBranchName] = useState("");
   const data = useData();
 
   const body = useMemo(() => {
-    if (activeTab === "staff") return <StaffPage data={data} />;
-    if (activeTab === "attendance") return <AttendancePage data={data} />;
-    if (activeTab === "kpi") return <KpiPage data={data} />;
-    if (activeTab === "salary") return <SalaryPage data={data} />;
-    if (activeTab === "kpi-config") return <KpiConfigPage />;
+    if (!selectedBranchId && activeTab !== "branches" && activeTab !== "dashboard") {
+      return (
+        <div className="card">
+          <h3>Vui lòng chọn chi nhánh</h3>
+          <p className="muted">Hãy chọn 1 chi nhánh ở cột bên trái trước khi thao tác.</p>
+        </div>
+      );
+    }
+    if (activeTab === "branches") {
+      return (
+        <div className="card">
+          <div className="page-header">
+            <h3>Quản lý chi nhánh</h3>
+            {selectedBranchId && (
+              <span className="muted">
+                Đang chọn: {data.branches.find((b) => b.id === selectedBranchId)?.name}
+              </span>
+            )}
+          </div>
+          <div className="row">
+            <input
+              value={newBranchName}
+              onChange={(e) => setNewBranchName(e.target.value)}
+              placeholder="Tên chi nhánh mới"
+            />
+            <button className="primary" onClick={handleCreateBranch}>Thêm</button>
+          </div>
+          <div className="branch-list" style={{ marginTop: 16 }}>
+            {data.branches.map((branch) => (
+              <div key={branch.id} className={selectedBranchId === branch.id ? "branch-item active" : "branch-item"}>
+                <button className="branch-select" onClick={() => setSelectedBranchId(branch.id)}>
+                  {branch.name}
+                </button>
+                <button className="branch-delete" onClick={() => handleDeleteBranch(branch.id)}>Xóa</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+    if (activeTab === "staff") return <StaffPage data={data} selectedBranchId={selectedBranchId} />;
+    if (activeTab === "attendance") return <AttendancePage data={data} selectedBranchId={selectedBranchId} />;
+    if (activeTab === "kpi") return <KpiPage data={data} selectedBranchId={selectedBranchId} />;
+    if (activeTab === "salary") return <SalaryPage data={data} selectedBranchId={selectedBranchId} />;
+    if (activeTab === "kpi-config") return <KpiConfigPage data={data} selectedBranchId={selectedBranchId} />;
     return <DashboardPage data={data} />;
-  }, [activeTab, data]);
+  }, [activeTab, data, selectedBranchId]);
+
+  async function handleCreateBranch() {
+    const name = newBranchName.trim();
+    if (!name) return;
+    await api.createBranch({ name });
+    setNewBranchName("");
+    await data.reload();
+  }
+
+  async function handleDeleteBranch(id) {
+    if (!confirm("Xóa chi nhánh này?")) return;
+    try {
+      await api.deleteBranch(id);
+      if (selectedBranchId === id) setSelectedBranchId(null);
+      await data.reload();
+    } catch (error) {
+      alert("Không thể xóa chi nhánh có nhân viên.");
+    }
+  }
 
   return (
     <div className="app">

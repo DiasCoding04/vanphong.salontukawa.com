@@ -68,6 +68,43 @@ body {
   background: #2b3147;
 }
 
+.branch-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.branch-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid #2a2f45;
+  border-radius: 8px;
+  background: #1e2333;
+}
+
+.branch-item.active {
+  border-color: #f0c040;
+}
+
+.branch-select {
+  flex: 1;
+  background: transparent;
+  border: 0;
+  color: #eef2ff;
+  text-align: left;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.branch-delete {
+  background: transparent;
+  color: #ff8c8c;
+  border: 0;
+  width: 42px;
+  cursor: pointer;
+}
+
 .main {
   display: grid;
   grid-template-rows: 70px 1fr;
@@ -159,6 +196,38 @@ body {
   gap: 10px;
   flex-wrap: wrap;
   align-items: center;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.error-text {
+  color: #ff8c8c;
+  margin: 10px 0 0;
+}
+
+.icon-btn {
+  border: 1px solid #3a4260;
+  background: #2b3147;
+  color: #eef2ff;
+  border-radius: 8px;
+  padding: 4px 8px;
+  margin-right: 6px;
+  cursor: pointer;
+}
+
+.icon-btn.danger {
+  border-color: #6b2d2d;
+  color: #ff8c8c;
 }
 
 input,

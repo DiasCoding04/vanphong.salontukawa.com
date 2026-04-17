@@ -1,4 +1,4 @@
-function calculateKpiByStaff(staff, attendanceRows, kpiConfig) {
+function calculateKpiByStaff(staff, attendanceRows, kpiConfig, staffKpiConfigMap = new Map()) {
   const byStaff = new Map();
   for (const row of attendanceRows) {
     if (!byStaff.has(row.staff_id)) byStaff.set(row.staff_id, []);
@@ -14,7 +14,7 @@ function calculateKpiByStaff(staff, attendanceRows, kpiConfig) {
     const totalWash = rows.reduce((sum, r) => sum + r.wash, 0);
     const checkinRate = totalClients > 0 ? Math.round((totalCheckins / totalClients) * 100) : 0;
 
-    const cfg = kpiConfig[person.type];
+    const cfg = staffKpiConfigMap.get(person.id) || kpiConfig[person.type];
     const checks = {
       bookings: totalBookings >= cfg.monthlyBookings,
       checkin: checkinRate >= cfg.monthlyCheckinRate
@@ -30,7 +30,7 @@ function calculateKpiByStaff(staff, attendanceRows, kpiConfig) {
   });
 }
 
-function calculateSalaryReport(staff, attendanceRows, kpiRows, adjustments, kpiConfig) {
+function calculateSalaryReport(staff, attendanceRows, kpiRows, adjustments, kpiConfig, holdHistoryMap = new Map()) {
   const attendanceMap = new Map();
   for (const row of attendanceRows) {
     if (!attendanceMap.has(row.staff_id)) attendanceMap.set(row.staff_id, []);
@@ -52,6 +52,14 @@ function calculateSalaryReport(staff, attendanceRows, kpiRows, adjustments, kpiC
     const kpiBonus = myAdjustments.filter((a) => a.type === "kpibonus").reduce((s, v) => s + v.amount, 0);
     const penalties = myAdjustments.filter((a) => a.type === "penalty").reduce((s, v) => s + v.amount, 0);
 
+    const salaryBeforeHold = base + commission + booking8 + kpiBonus - failPenalty - penalties;
+    const monthlyHoldCap = Math.max(0, Math.round(salaryBeforeHold * 0.15));
+    const holdState = holdHistoryMap.get(person.id) || { deductedBefore: 0, deductedCurrent: null };
+    const holdRemainingBefore = Math.max(0, (person.hold_remaining || 0) - holdState.deductedBefore);
+    const suggestedHoldDeduction = Math.min(holdRemainingBefore, monthlyHoldCap);
+    const holdDeduction = holdState.deductedCurrent ?? suggestedHoldDeduction;
+    const holdRemainingAfter = Math.max(0, holdRemainingBefore - holdDeduction);
+
     return {
       ...person,
       workDays,
@@ -61,7 +69,11 @@ function calculateSalaryReport(staff, attendanceRows, kpiRows, adjustments, kpiC
       kpiBonus,
       failPenalty,
       penalties,
-      total: base + commission + booking8 + kpiBonus - failPenalty - penalties
+      holdDeduction,
+      holdRemainingBefore,
+      holdRemainingAfter,
+      holdStatus: holdRemainingAfter > 0 ? `${holdRemainingAfter} VND` : "Da giam du",
+      total: salaryBeforeHold - holdDeduction
     };
   });
 }

@@ -4,6 +4,56 @@ const { calculateKpiByStaff, calculateSalaryReport } = require("../services/repo
 
 const router = express.Router();
 
+function parseMonthRange(month) {
+  const [y, m] = month.split("-").map(Number);
+  const from = `${y}-${String(m).padStart(2, "0")}-01`;
+  const toDate = new Date(y, m, 0);
+  const to = `${toDate.getFullYear()}-${String(toDate.getMonth() + 1).padStart(2, "0")}-${String(toDate.getDate()).padStart(2, "0")}`;
+  return { from, to };
+}
+
+async function getStaffKpiMap(month, staffRows) {
+  if (!month || staffRows.length === 0) return new Map();
+  const { from, to } = parseMonthRange(month);
+  const ids = staffRows.map((s) => s.id);
+  const placeholders = ids.map(() => "?").join(",");
+  const rows = await all(
+    `SELECT * FROM staff_kpi_settings
+     WHERE staff_id IN (${placeholders})
+       AND start_date <= ?
+       AND (end_date IS NULL OR end_date = '' OR end_date >= ?)`,
+    [...ids, to, from]
+  );
+  const map = new Map();
+  for (const row of rows) {
+    map.set(row.staff_id, JSON.parse(row.config_json));
+  }
+  return map;
+}
+
+async function getHoldHistoryMap(month, staffRows) {
+  if (!month || staffRows.length === 0) return new Map();
+  const ids = staffRows.map((s) => s.id);
+  const placeholders = ids.map(() => "?").join(",");
+  const rows = await all(
+    `SELECT staff_id, month, amount
+     FROM hold_deductions
+     WHERE staff_id IN (${placeholders}) AND month <= ?`,
+    [...ids, month]
+  );
+
+  const map = new Map();
+  for (const row of rows) {
+    if (!map.has(row.staff_id)) {
+      map.set(row.staff_id, { deductedBefore: 0, deductedCurrent: null });
+    }
+    const state = map.get(row.staff_id);
+    if (row.month < month) state.deductedBefore += row.amount;
+    if (row.month === month) state.deductedCurrent = row.amount;
+  }
+  return map;
+}
+
 function toStaffDto(row) {
   return {
     id: row.id,
@@ -11,6 +61,8 @@ function toStaffDto(row) {
     type: row.type,
     branchId: row.branch_id,
     baseSalary: row.base_salary,
+    accountNumber: row.account_number || "",
+    holdRemaining: row.hold_remaining || 0,
     status: row.status,
     startDate: row.start_date
   };
@@ -73,10 +125,10 @@ router.get("/staff", async (req, res, next) => {
 
 router.post("/staff", async (req, res, next) => {
   try {
-    const { name, type, branchId, baseSalary, status, startDate } = req.body;
+    const { name, type, branchId, baseSalary, accountNumber, holdRemaining, status, startDate } = req.body;
     const result = await run(
-      "INSERT INTO staff (name, type, branch_id, base_salary, status, start_date) VALUES (?, ?, ?, ?, ?, ?)",
-      [name, type, branchId, baseSalary, status || "active", startDate]
+      "INSERT INTO staff (name, type, branch_id, base_salary, account_number, hold_remaining, status, start_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      [name, type, branchId, baseSalary, accountNumber || "", holdRemaining || 0, status || "active", startDate]
     );
     const created = await get("SELECT * FROM staff WHERE id = ?", [result.id]);
     res.status(201).json(toStaffDto(created));
@@ -88,10 +140,10 @@ router.post("/staff", async (req, res, next) => {
 router.put("/staff/:id", async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { name, type, branchId, baseSalary, status, startDate } = req.body;
+    const { name, type, branchId, baseSalary, accountNumber, holdRemaining, status, startDate } = req.body;
     await run(
-      `UPDATE staff SET name = ?, type = ?, branch_id = ?, base_salary = ?, status = ?, start_date = ? WHERE id = ?`,
-      [name, type, branchId, baseSalary, status, startDate, id]
+      `UPDATE staff SET name = ?, type = ?, branch_id = ?, base_salary = ?, account_number = ?, hold_remaining = ?, status = ?, start_date = ? WHERE id = ?`,
+      [name, type, branchId, baseSalary, accountNumber || "", holdRemaining || 0, status, startDate, id]
     );
     const updated = await get("SELECT * FROM staff WHERE id = ?", [id]);
     res.json(toStaffDto(updated));
@@ -179,6 +231,47 @@ router.put("/kpi-config", async (req, res, next) => {
   }
 });
 
+router.get("/staff-kpi-settings", async (req, res, next) => {
+  try {
+    const { staffId } = req.query;
+    if (!staffId) return res.status(400).json({ message: "staffId is required" });
+    const row = await get("SELECT * FROM staff_kpi_settings WHERE staff_id = ?", [staffId]);
+    if (!row) return res.json(null);
+    res.json({
+      staffId: row.staff_id,
+      startDate: row.start_date,
+      endDate: row.end_date,
+      config: JSON.parse(row.config_json)
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.put("/staff-kpi-settings", async (req, res, next) => {
+  try {
+    const { staffId, startDate, endDate, config } = req.body;
+    await run(
+      `INSERT INTO staff_kpi_settings (staff_id, start_date, end_date, config_json)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(staff_id) DO UPDATE SET
+         start_date = excluded.start_date,
+         end_date = excluded.end_date,
+         config_json = excluded.config_json`,
+      [staffId, startDate, endDate || null, JSON.stringify(config)]
+    );
+    const row = await get("SELECT * FROM staff_kpi_settings WHERE staff_id = ?", [staffId]);
+    res.json({
+      staffId: row.staff_id,
+      startDate: row.start_date,
+      endDate: row.end_date,
+      config: JSON.parse(row.config_json)
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.post("/salary-adjustments", async (req, res, next) => {
   try {
     const { staffId, month, type, amount, note } = req.body;
@@ -246,7 +339,8 @@ router.get("/reports/kpi", async (req, res, next) => {
       branchId ? [`${month}%`, branchId] : [`${month}%`]
     );
     const kpiConfig = JSON.parse((await get("SELECT config_json FROM kpi_config WHERE id = 1")).config_json);
-    const data = calculateKpiByStaff(staffRows, attendanceRows, kpiConfig);
+    const staffKpiMap = await getStaffKpiMap(month, staffRows);
+    const data = calculateKpiByStaff(staffRows, attendanceRows, kpiConfig, staffKpiMap);
     res.json(data);
   } catch (error) {
     next(error);
@@ -272,9 +366,51 @@ router.get("/reports/salary", async (req, res, next) => {
       branchId ? [month, branchId] : [month]
     );
     const kpiConfig = JSON.parse((await get("SELECT config_json FROM kpi_config WHERE id = 1")).config_json);
-    const kpiRows = calculateKpiByStaff(staffRows, attendanceRows, kpiConfig);
-    const salaries = calculateSalaryReport(staffRows, attendanceRows, kpiRows, adjustments, kpiConfig);
+    const staffKpiMap = await getStaffKpiMap(month, staffRows);
+    const kpiRows = calculateKpiByStaff(staffRows, attendanceRows, kpiConfig, staffKpiMap);
+    const holdHistoryMap = await getHoldHistoryMap(month, staffRows);
+    const salaries = calculateSalaryReport(staffRows, attendanceRows, kpiRows, adjustments, kpiConfig, holdHistoryMap);
     res.json(salaries);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/hold-deductions/apply-month", async (req, res, next) => {
+  try {
+    const { month, branchId } = req.body;
+    if (!month) return res.status(400).json({ message: "month is required" });
+
+    const staffRows = branchId
+      ? await all("SELECT * FROM staff WHERE branch_id = ? AND status = 'active' ORDER BY id", [branchId])
+      : await all("SELECT * FROM staff WHERE status = 'active' ORDER BY id");
+    const attendanceRows = await all(
+      `SELECT a.* FROM attendance a
+       JOIN staff s ON s.id = a.staff_id
+       WHERE a.date LIKE ? ${branchId ? "AND s.branch_id = ?" : ""}`,
+      branchId ? [`${month}%`, branchId] : [`${month}%`]
+    );
+    const adjustments = await all(
+      `SELECT sa.* FROM salary_adjustments sa
+       JOIN staff s ON s.id = sa.staff_id
+       WHERE sa.month = ? ${branchId ? "AND s.branch_id = ?" : ""}`,
+      branchId ? [month, branchId] : [month]
+    );
+    const kpiConfig = JSON.parse((await get("SELECT config_json FROM kpi_config WHERE id = 1")).config_json);
+    const staffKpiMap = await getStaffKpiMap(month, staffRows);
+    const holdHistoryMap = await getHoldHistoryMap(month, staffRows);
+    const kpiRows = calculateKpiByStaff(staffRows, attendanceRows, kpiConfig, staffKpiMap);
+    const salaries = calculateSalaryReport(staffRows, attendanceRows, kpiRows, adjustments, kpiConfig, holdHistoryMap);
+
+    for (const row of salaries) {
+      await run(
+        `INSERT INTO hold_deductions (staff_id, month, amount)
+         VALUES (?, ?, ?)
+         ON CONFLICT(staff_id, month) DO UPDATE SET amount = excluded.amount`,
+        [row.id, month, row.holdDeduction]
+      );
+    }
+    res.json({ ok: true, totalStaff: salaries.length });
   } catch (error) {
     next(error);
   }
