@@ -1,99 +1,445 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import { vietnamTodayIsoDate } from "../utils/vietnamTime";
 
-export function KpiConfigPage({ data, selectedBranchId }) {
-  const [baseCfg, setBaseCfg] = useState(null);
-  const [selectedStaffId, setSelectedStaffId] = useState("");
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
-  const [formCfg, setFormCfg] = useState(null);
+function cloneMain(cfg) {
+  return JSON.parse(JSON.stringify(cfg.main));
+}
 
-  const branchStaff = useMemo(
-    () => data.staff.filter((s) => s.branchId === selectedBranchId),
-    [data.staff, selectedBranchId]
-  );
+function cloneAssistant(cfg) {
+  return JSON.parse(JSON.stringify(cfg.assistant));
+}
+
+export function KpiConfigPage({ data, selectedBranchId }) {
+  const [cfg, setCfg] = useState(null);
+
+  const [mainStaffId, setMainStaffId] = useState("");
+  const [mainStart, setMainStart] = useState("");
+  const [mainEnd, setMainEnd] = useState("");
+  const [mainForm, setMainForm] = useState(null);
+
+  const [assistStaffId, setAssistStaffId] = useState("");
+  const [assistStart, setAssistStart] = useState("");
+  const [assistEnd, setAssistEnd] = useState("");
+  const [assistForm, setAssistForm] = useState(null);
+
+  const mainStaffList = useMemo(() => {
+    if (selectedBranchId == null || selectedBranchId === "") return [];
+    const bid = Number(selectedBranchId);
+    return data.staff
+      .filter((s) => Number(s.branchId) === bid && s.status === "working" && s.type === "main")
+      .sort((a, b) => a.name.localeCompare(b.name, "vi"));
+  }, [data.staff, selectedBranchId]);
+
+  const assistStaffList = useMemo(() => {
+    if (selectedBranchId == null || selectedBranchId === "") return [];
+    const bid = Number(selectedBranchId);
+    return data.staff
+      .filter((s) => Number(s.branchId) === bid && s.status === "working" && s.type === "assistant")
+      .sort((a, b) => a.name.localeCompare(b.name, "vi"));
+  }, [data.staff, selectedBranchId]);
 
   useEffect(() => {
-    api.getKpiConfig().then(setBaseCfg);
+    api.getKpiConfig().then(setCfg);
   }, []);
 
   useEffect(() => {
-    if (!selectedStaffId || !baseCfg) {
-      setFormCfg(null);
-      setStartDate("");
-      setEndDate("");
+    setMainStaffId("");
+    setAssistStaffId("");
+  }, [selectedBranchId]);
+
+  useEffect(() => {
+    if (!cfg || !selectedBranchId) {
+      setMainForm(null);
+      setMainStart("");
+      setMainEnd("");
       return;
     }
-    const staff = branchStaff.find((s) => s.id === Number(selectedStaffId));
-    const fallbackCfg = JSON.parse(JSON.stringify(baseCfg[staff.type]));
-    api.getStaffKpiSetting(selectedStaffId).then((setting) => {
-      setStartDate(setting?.startDate || vietnamTodayIsoDate());
-      setEndDate(setting?.endDate || "");
-      setFormCfg(setting?.config || fallbackCfg);
+    if (!mainStaffId) {
+      setMainForm(cloneMain(cfg));
+      setMainStart(vietnamTodayIsoDate());
+      setMainEnd("");
+      return;
+    }
+    let cancelled = false;
+    setMainForm(null);
+    setMainStart("");
+    setMainEnd("");
+    api.getStaffKpiSetting(mainStaffId).then((setting) => {
+      if (cancelled) return;
+      setMainStart(setting?.startDate || vietnamTodayIsoDate());
+      setMainEnd(setting?.endDate || "");
+      setMainForm(setting?.config || cloneMain(cfg));
     });
-  }, [selectedStaffId, baseCfg, branchStaff]);
+    return () => {
+      cancelled = true;
+    };
+  }, [mainStaffId, cfg, selectedBranchId]);
 
-  function updateField(key, value) {
-    setFormCfg((prev) => ({ ...prev, [key]: Number(value) }));
-  }
+  useEffect(() => {
+    if (!cfg || !selectedBranchId) {
+      setAssistForm(null);
+      setAssistStart("");
+      setAssistEnd("");
+      return;
+    }
+    if (!assistStaffId) {
+      setAssistForm(cloneAssistant(cfg));
+      setAssistStart(vietnamTodayIsoDate());
+      setAssistEnd("");
+      return;
+    }
+    let cancelled = false;
+    setAssistForm(null);
+    setAssistStart("");
+    setAssistEnd("");
+    api.getStaffKpiSetting(assistStaffId).then((setting) => {
+      if (cancelled) return;
+      setAssistStart(setting?.startDate || vietnamTodayIsoDate());
+      setAssistEnd(setting?.endDate || "");
+      setAssistForm(setting?.config || cloneAssistant(cfg));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [assistStaffId, cfg, selectedBranchId]);
 
-  async function handleSave() {
-    if (!selectedStaffId || !formCfg || !startDate) return;
+  const updateMainForm = useCallback((key, value) => {
+    setMainForm((prev) => (prev ? { ...prev, [key]: Number(value) } : prev));
+  }, []);
+
+  const updateAssistForm = useCallback((key, value) => {
+    setAssistForm((prev) => (prev ? { ...prev, [key]: Number(value) } : prev));
+  }, []);
+
+  async function handleSaveMainStaff() {
+    if (!mainStaffId || !mainForm || !mainStart) return;
     await api.saveStaffKpiSetting({
-      staffId: Number(selectedStaffId),
-      startDate,
-      endDate: endDate || null,
-      config: formCfg
+      staffId: Number(mainStaffId),
+      startDate: mainStart,
+      endDate: mainEnd || null,
+      config: mainForm
     });
-    alert("Đã lưu KPI cho nhân viên.");
+    alert("Đã lưu KPI cho thợ chính đã chọn.");
   }
+
+  async function handleSaveAssistStaff() {
+    if (!assistStaffId || !assistForm || !assistStart) return;
+    await api.saveStaffKpiSetting({
+      staffId: Number(assistStaffId),
+      startDate: assistStart,
+      endDate: assistEnd || null,
+      config: assistForm
+    });
+    alert("Đã lưu KPI cho thợ phụ đã chọn.");
+  }
+
+  const canSaveMain = Boolean(selectedBranchId && mainStaffId && mainForm && mainStart);
+  const canSaveAssist = Boolean(selectedBranchId && assistStaffId && assistForm && assistStart);
 
   return (
-    <div className="card">
-      <div className="page-header"><h3>Cài đặt KPI theo nhân viên</h3></div>
-
-      <div className="row" style={{ marginBottom: 12 }}>
-        <select value={selectedStaffId} onChange={(e) => setSelectedStaffId(e.target.value)}>
-          <option value="">Chọn nhân viên của chi nhánh đang lọc</option>
-          {branchStaff.map((s) => (
-            <option key={s.id} value={s.id}>{s.name}</option>
-          ))}
-        </select>
+    <div className="kpi-config-two-cols">
+      <div className="card kpi-config-staff-card">
+        <div className="page-header" style={{ marginBottom: 8 }}>
+          <h3 style={{ margin: 0, fontSize: 17 }}>KPI thợ chính</h3>
+        </div>
+        {!selectedBranchId && <p className="muted">Chọn chi nhánh để xem bảng.</p>}
+        {selectedBranchId && !cfg && <p className="muted">Đang tải…</p>}
+        {selectedBranchId && cfg && (
+          <>
+            <div className="row" style={{ marginBottom: 12, alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+              <label className="muted">Chọn nhân viên</label>
+              <select
+                value={mainStaffId}
+                onChange={(e) => setMainStaffId(e.target.value)}
+                className="kpi-config-staff-select"
+              >
+                <option value="">— Chọn nhân viên —</option>
+                {mainStaffList.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {mainStaffList.length === 0 && (
+              <p className="muted">Không có thợ chính đang làm ở chi nhánh này.</p>
+            )}
+            {mainForm && (
+              <>
+                <div className="row" style={{ marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
+                  <label className="muted">Ngày bắt đầu</label>
+                  <input type="date" value={mainStart} onChange={(e) => setMainStart(e.target.value)} />
+                  <label className="muted">Ngày kết thúc (tuỳ chọn)</label>
+                  <input type="date" value={mainEnd} onChange={(e) => setMainEnd(e.target.value)} />
+                </div>
+                <div className="kpi-config-table-wrap">
+                  <table className="data-table kpi-config-matrix">
+                    <thead>
+                      <tr>
+                        <th>Chỉ tiêu</th>
+                        <th>KPI tuần</th>
+                        <th>KPI tháng</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>Lịch đặt hóa chất</td>
+                        <td>
+                          <input
+                            type="number"
+                            min={0}
+                            className="kpi-config-input"
+                            value={mainForm.weeklyBookings ?? 0}
+                            onChange={(e) => updateMainForm("weeklyBookings", e.target.value)}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="number"
+                            min={0}
+                            className="kpi-config-input"
+                            value={mainForm.monthlyBookings ?? 0}
+                            onChange={(e) => updateMainForm("monthlyBookings", e.target.value)}
+                          />
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>Check-in (%)</td>
+                        <td>
+                          <input
+                            type="number"
+                            min={0}
+                            max={100}
+                            className="kpi-config-input"
+                            value={mainForm.weeklyCheckinRate ?? 0}
+                            onChange={(e) => updateMainForm("weeklyCheckinRate", e.target.value)}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="number"
+                            min={0}
+                            max={100}
+                            className="kpi-config-input"
+                            value={mainForm.monthlyCheckinRate ?? 0}
+                            onChange={(e) => updateMainForm("monthlyCheckinRate", e.target.value)}
+                          />
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>Doanh thu tháng (đồng)</td>
+                        <td className="muted kpi-config-na">—</td>
+                        <td>
+                          <input
+                            type="number"
+                            min={0}
+                            className="kpi-config-input"
+                            value={mainForm.monthlyRevenue ?? 0}
+                            onChange={(e) => updateMainForm("monthlyRevenue", e.target.value)}
+                          />
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>Sản phẩm (tháng)</td>
+                        <td className="muted kpi-config-na">—</td>
+                        <td>
+                          <input
+                            type="number"
+                            min={0}
+                            className="kpi-config-input"
+                            value={mainForm.monthlyProducts ?? 0}
+                            onChange={(e) => updateMainForm("monthlyProducts", e.target.value)}
+                          />
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <p className="muted small" style={{ marginTop: 8, marginBottom: 0 }}>
+                  Cột «Lịch đặt hóa chất» trong KPI tuần / KPI tháng so với ngưỡng tương ứng ở đây.
+                  Đạt khi tổng lịch trong kỳ lớn hơn hoặc bằng ngưỡng đã nhập.
+                </p>
+                <button
+                  type="button"
+                  className="primary"
+                  style={{ marginTop: 12 }}
+                  disabled={!canSaveMain}
+                  onClick={handleSaveMainStaff}
+                >
+                  Lưu KPI cho nhân viên đã chọn
+                </button>
+                {!mainStaffId && (
+                  <p className="muted small" style={{ marginTop: 8 }}>
+                    Chọn nhân viên để lưu.
+                  </p>
+                )}
+              </>
+            )}
+            {selectedBranchId && cfg && !mainForm && mainStaffId && (
+              <p className="muted">Đang tải KPI nhân viên…</p>
+            )}
+          </>
+        )}
       </div>
 
-      {!selectedStaffId && <p className="muted">Vui lòng chọn nhân viên trước khi cài đặt KPI.</p>}
-
-      {selectedStaffId && formCfg && (
-        <>
-          <div className="row" style={{ marginBottom: 12 }}>
-            <label className="muted">Ngày bắt đầu</label>
-            <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-            <label className="muted">Ngày kết thúc (có thể để trống)</label>
-            <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-          </div>
-
-          <div className="row">
-            <label className="muted">Lịch đặt tháng</label>
-            <input type="number" value={formCfg.monthlyBookings || 0} onChange={(e) => updateField("monthlyBookings", e.target.value)} />
-            <label className="muted">Check-in thang (%)</label>
-            <input type="number" value={formCfg.monthlyCheckinRate || 0} onChange={(e) => updateField("monthlyCheckinRate", e.target.value)} />
-            {formCfg.weeklyWash !== undefined && (
+      <div className="card kpi-config-staff-card">
+        <div className="page-header" style={{ marginBottom: 8 }}>
+          <h3 style={{ margin: 0, fontSize: 17 }}>KPI thợ phụ</h3>
+        </div>
+        {!selectedBranchId && <p className="muted">Chọn chi nhánh để xem bảng.</p>}
+        {selectedBranchId && !cfg && <p className="muted">Đang tải…</p>}
+        {selectedBranchId && cfg && (
+          <>
+            <div className="row" style={{ marginBottom: 12, alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+              <label className="muted">Chọn nhân viên</label>
+              <select
+                value={assistStaffId}
+                onChange={(e) => setAssistStaffId(e.target.value)}
+                className="kpi-config-staff-select"
+              >
+                <option value="">— Chọn nhân viên —</option>
+                {assistStaffList.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {assistStaffList.length === 0 && (
+              <p className="muted">Không có thợ phụ đang làm ở chi nhánh này.</p>
+            )}
+            {assistForm && (
               <>
-                <label className="muted">KPI gội tuần</label>
-                <input type="number" value={formCfg.weeklyWash || 0} onChange={(e) => updateField("weeklyWash", e.target.value)} />
+                <div className="row" style={{ marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
+                  <label className="muted">Ngày bắt đầu</label>
+                  <input type="date" value={assistStart} onChange={(e) => setAssistStart(e.target.value)} />
+                  <label className="muted">Ngày kết thúc (tuỳ chọn)</label>
+                  <input type="date" value={assistEnd} onChange={(e) => setAssistEnd(e.target.value)} />
+                </div>
+                <div className="kpi-config-table-wrap">
+                  <table className="data-table kpi-config-matrix">
+                    <thead>
+                      <tr>
+                        <th>Chỉ tiêu</th>
+                        <th>KPI tuần</th>
+                        <th>KPI tháng</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>Lịch đặt hóa chất</td>
+                        <td>
+                          <input
+                            type="number"
+                            min={0}
+                            className="kpi-config-input"
+                            value={assistForm.weeklyBookings ?? 0}
+                            onChange={(e) => updateAssistForm("weeklyBookings", e.target.value)}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="number"
+                            min={0}
+                            className="kpi-config-input"
+                            value={assistForm.monthlyBookings ?? 0}
+                            onChange={(e) => updateAssistForm("monthlyBookings", e.target.value)}
+                          />
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>Check-in (%)</td>
+                        <td>
+                          <input
+                            type="number"
+                            min={0}
+                            max={100}
+                            className="kpi-config-input"
+                            value={assistForm.weeklyCheckinRate ?? 0}
+                            onChange={(e) => updateAssistForm("weeklyCheckinRate", e.target.value)}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="number"
+                            min={0}
+                            max={100}
+                            className="kpi-config-input"
+                            value={assistForm.monthlyCheckinRate ?? 0}
+                            onChange={(e) => updateAssistForm("monthlyCheckinRate", e.target.value)}
+                          />
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>Lịch đặt gội</td>
+                        <td>
+                          <input
+                            type="number"
+                            min={0}
+                            className="kpi-config-input"
+                            value={assistForm.weeklyWash ?? 0}
+                            onChange={(e) => updateAssistForm("weeklyWash", e.target.value)}
+                          />
+                        </td>
+                        <td className="muted small" title="KPI tháng so sánh tổng lịch đặt gội trong tháng với 4× ngưỡng tuần (cùng cột «Lịch đặt gội» ở KPI tháng).">
+                          {(assistForm.weeklyWash ?? 0) > 0 ? `${(assistForm.weeklyWash ?? 0) * 4} (4× tuần)` : "—"}
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>Doanh thu tháng (đồng)</td>
+                        <td className="muted kpi-config-na">—</td>
+                        <td>
+                          <input
+                            type="number"
+                            min={0}
+                            className="kpi-config-input"
+                            value={assistForm.monthlyRevenue ?? 0}
+                            onChange={(e) => updateAssistForm("monthlyRevenue", e.target.value)}
+                          />
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>Sản phẩm (tháng)</td>
+                        <td className="muted kpi-config-na">—</td>
+                        <td>
+                          <input
+                            type="number"
+                            min={0}
+                            className="kpi-config-input"
+                            value={assistForm.monthlyProducts ?? 0}
+                            onChange={(e) => updateAssistForm("monthlyProducts", e.target.value)}
+                          />
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <p className="muted small" style={{ marginTop: 8, marginBottom: 0 }}>
+                  KPI tháng — lịch đặt gội: so sánh tổng cột «Lịch đặt gội» trong báo cáo KPI tháng với 4 × (ngưỡng KPI tuần ở trên). KPI tuần so với cùng cột trong KPI tuần.
+                </p>
+                <button
+                  type="button"
+                  className="primary"
+                  style={{ marginTop: 12 }}
+                  disabled={!canSaveAssist}
+                  onClick={handleSaveAssistStaff}
+                >
+                  Lưu KPI cho nhân viên đã chọn
+                </button>
+                {!assistStaffId && (
+                  <p className="muted small" style={{ marginTop: 8 }}>
+                    Chọn nhân viên để lưu.
+                  </p>
+                )}
               </>
             )}
-            {formCfg.monthlyRevenue !== undefined && (
-              <>
-                <label className="muted">Doanh thu tháng</label>
-                <input type="number" value={formCfg.monthlyRevenue || 0} onChange={(e) => updateField("monthlyRevenue", e.target.value)} />
-              </>
+            {selectedBranchId && cfg && !assistForm && assistStaffId && (
+              <p className="muted">Đang tải KPI nhân viên…</p>
             )}
-            <button className="primary" onClick={handleSave}>Lưu KPI</button>
-          </div>
-        </>
-      )}
+          </>
+        )}
+      </div>
     </div>
   );
 }

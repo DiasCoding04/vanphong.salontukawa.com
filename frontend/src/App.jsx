@@ -5,25 +5,30 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { StaffPage } from "./pages/StaffPage";
 import { PersonalInfoPage } from "./pages/PersonalInfoPage";
 import { AttendancePage } from "./pages/AttendancePage";
-import { KpiPage } from "./pages/KpiPage";
+import { KpiResultsPage } from "./pages/KpiResultsPage";
 import { SalaryPage } from "./pages/SalaryPage";
-import { KpiConfigPage } from "./pages/KpiConfigPage";
-
 const tabs = [
   { key: "dashboard", label: "Tổng quan" },
   { key: "branches", label: "Lọc chi nhánh" },
   { key: "staff", label: "Nhân sự" },
   { key: "personal-info", label: "Thông tin cá nhân" },
   { key: "attendance", label: "Chấm công" },
-  { key: "kpi", label: "KPI tháng" },
-  { key: "salary", label: "Lương tháng" },
-  { key: "kpi-config", label: "Cài đặt KPI" }
+  { key: "kpi", label: "Kết quả KPI" },
+  { key: "salary", label: "Lương tháng" }
 ];
 const sidebarTabs = tabs.filter((tab) => tab.key !== "personal-info");
 const staffTopTabs = tabs.filter((tab) => tab.key === "staff" || tab.key === "personal-info");
 
+const kpiTopTabs = [
+  { key: "week", label: "KPI tuần" },
+  { key: "month", label: "KPI tháng" },
+  { key: "manager", label: "KPI quản lí" },
+  { key: "config", label: "Cài đặt KPI" }
+];
+
 function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
+  const [kpiSubTab, setKpiSubTab] = useState("month");
   const [selectedBranchId, setSelectedBranchId] = useState(null);
   const [newBranchName, setNewBranchName] = useState("");
   const data = useData();
@@ -72,11 +77,12 @@ function App() {
     if (activeTab === "staff") return <StaffPage data={data} selectedBranchId={selectedBranchId} />;
     if (activeTab === "personal-info") return <PersonalInfoPage data={data} selectedBranchId={selectedBranchId} />;
     if (activeTab === "attendance") return <AttendancePage data={data} selectedBranchId={selectedBranchId} />;
-    if (activeTab === "kpi") return <KpiPage data={data} selectedBranchId={selectedBranchId} />;
+    if (activeTab === "kpi") return (
+      <KpiResultsPage data={data} selectedBranchId={selectedBranchId} subTab={kpiSubTab} />
+    );
     if (activeTab === "salary") return <SalaryPage data={data} selectedBranchId={selectedBranchId} />;
-    if (activeTab === "kpi-config") return <KpiConfigPage data={data} selectedBranchId={selectedBranchId} />;
     return <DashboardPage data={data} />;
-  }, [activeTab, data, selectedBranchId]);
+  }, [activeTab, data, selectedBranchId, kpiSubTab]);
 
   async function handleCreateBranch() {
     const name = newBranchName.trim();
@@ -123,6 +129,19 @@ function App() {
                   key={tab.key}
                   className={activeTab === tab.key ? "top-tab active" : "top-tab"}
                   onClick={() => setActiveTab(tab.key)}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          ) : activeTab === "kpi" ? (
+            <div className="top-tabs">
+              {kpiTopTabs.map((tab) => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  className={kpiSubTab === tab.key ? "top-tab active" : "top-tab"}
+                  onClick={() => setKpiSubTab(tab.key)}
                 >
                   {tab.label}
                 </button>

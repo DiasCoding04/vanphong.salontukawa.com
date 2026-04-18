@@ -12,12 +12,23 @@ export function SalaryPage({ selectedBranchId }) {
   const [penaltyAmount, setPenaltyAmount] = useState(0);
   const [penaltyNote, setPenaltyNote] = useState("");
   const [isApplyingHold, setIsApplyingHold] = useState(false);
+  const [penaltyHistory, setPenaltyHistory] = useState(null);
 
   async function load() {
     setRows(await api.getSalaryReport(month, selectedBranchId));
   }
 
+  async function openPenaltyHistory(r) {
+    try {
+      const list = await api.getSalaryAdjustments({ month, staffId: r.id, type: "penalty" });
+      setPenaltyHistory({ name: r.name, staffId: r.id, rows: list });
+    } catch (e) {
+      alert(e.message || "Không tải được lịch sử phạt");
+    }
+  }
+
   useEffect(() => {
+    setPenaltyHistory(null);
     load();
   }, [month, selectedBranchId]);
 
@@ -56,7 +67,15 @@ export function SalaryPage({ selectedBranchId }) {
               <td>{fmtMoney(r.booking8)}</td>
               <td>{fmtMoney(r.kpiBonus)}</td>
               <td>{r.failPenalty > 0 ? `-${fmtMoney(r.failPenalty)}` : "-"}</td>
-              <td>{r.penalties > 0 ? `-${fmtMoney(r.penalties)}` : "-"}</td>
+              <td>
+                {r.penalties > 0 ? (
+                  <button type="button" className="salary-penalty-link" onClick={() => openPenaltyHistory(r)}>
+                    {`-${fmtMoney(r.penalties)}`}
+                  </button>
+                ) : (
+                  "-"
+                )}
+              </td>
               <td>{r.holdDeduction > 0 ? `-${fmtMoney(r.holdDeduction)}` : "-"}</td>
               <td>{r.holdRemainingAfter > 0 ? fmtMoney(r.holdRemainingAfter) : "\u0110\u00e3 giam \u0111\u1ee7"}</td>
               <td>{fmtMoney(r.total)}</td>
@@ -65,6 +84,44 @@ export function SalaryPage({ selectedBranchId }) {
           ))}
         </tbody>
       </table>
+      {penaltyHistory && (
+        <div className="penalty-history-overlay" role="dialog" aria-modal="true" aria-label="L\u1ecbch s\u1eed ph\u1ea1t">
+          <button type="button" className="penalty-history-backdrop" aria-label="\u0110\u00f3ng" onClick={() => setPenaltyHistory(null)} />
+          <div className="penalty-history-panel card">
+            <div className="page-header" style={{ marginBottom: 12 }}>
+              <h4 style={{ margin: 0 }}>
+                {"Ph\u1ea1t ph\u00e1t sinh — "}
+                {penaltyHistory.name}
+                {" · "}
+                {month}
+              </h4>
+              <button type="button" className="secondary" onClick={() => setPenaltyHistory(null)}>
+                {"\u0110\u00f3ng"}
+              </button>
+            </div>
+            {penaltyHistory.rows.length === 0 ? (
+              <p className="muted">Không có dòng phạt.</p>
+            ) : (
+              <table>
+                <thead>
+                  <tr>
+                    <th>{"L\u00fd do / ghi ch\u00fa"}</th>
+                    <th>{"S\u1ed1 ti\u1ec1n"}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {penaltyHistory.rows.map((p) => (
+                    <tr key={p.id}>
+                      <td>{p.note || "—"}</td>
+                      <td>{fmtMoney(p.amount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
       {selected && (
         <div className="card" style={{ marginTop: 12 }}>
           <h4>{"Nh\u1eadp th\u01b0\u1edfng/ph\u1ea1t - "}{selected.name}</h4>

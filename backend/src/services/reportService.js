@@ -1,3 +1,43 @@
+function mergeStaffKpiCfg(person, kpiConfig, staffKpiConfigMap) {
+  const base = kpiConfig[person.type];
+  const ov = staffKpiConfigMap.get(person.id);
+  if (!ov) return base;
+  const merged = { ...base };
+  for (const [k, v] of Object.entries(ov)) {
+    if (v !== null && v !== undefined) merged[k] = v;
+  }
+  return merged;
+}
+
+/**
+ * Khớp bảng Cài đặt KPI: cột «KPI tháng» — lịch đặt hóa chất, check-in, doanh thu tháng, sản phẩm;
+ * thợ phụ thêm lịch đặt gội (ngưỡng tháng = 4× lịch đặt gội tuần, chỉ bật khi ngưỡng tuần > 0).
+ */
+function checksActiveMonth(cfg, type) {
+  const isAsst = type === "assistant";
+  const monthlyRev = Number(cfg.monthlyRevenue);
+  return {
+    bookings: (cfg.monthlyBookings ?? 0) > 0,
+    checkin: (cfg.monthlyCheckinRate ?? 0) > 0,
+    revenue: Number.isFinite(monthlyRev) && monthlyRev > 0,
+    products: (cfg.monthlyProducts ?? 0) > 0,
+    wash: isAsst && (cfg.weeklyWash ?? 0) > 0
+  };
+}
+
+/**
+ * Khớp bảng Cài đặt KPI: cột «KPI tuần» — lịch đặt hóa chất, check-in; thợ phụ thêm lịch đặt gội.
+ * Không có KPI tuần cho doanh thu / sản phẩm (trong UI là «—») nên không trả checksActive cho các ô đó.
+ */
+function checksActiveWeek(cfg, type) {
+  const isAsst = type === "assistant";
+  return {
+    bookings: (cfg.weeklyBookings ?? 0) > 0,
+    checkin: (cfg.weeklyCheckinRate ?? 0) > 0,
+    wash: isAsst && (cfg.weeklyWash ?? 0) > 0
+  };
+}
+
 function calculateKpiByStaff(staff, attendanceRows, kpiConfig, staffKpiConfigMap = new Map()) {
   const byStaff = new Map();
   for (const row of attendanceRows) {
@@ -6,27 +46,104 @@ function calculateKpiByStaff(staff, attendanceRows, kpiConfig, staffKpiConfigMap
   }
 
   return staff.map((person) => {
-    const rows = (byStaff.get(person.id) || []).filter((r) => r.present === 1);
+    const allRows = byStaff.get(person.id) || [];
+    const rows = allRows.filter((r) => r.present === 1);
+    /** Doanh thu: cộng mọi dòng trong tháng (đã chấm), không chỉ ngày có mặt — khớp tổng thực tế trên bảng chấm công. */
+    const totalRevenue = allRows.reduce((sum, r) => sum + (Number(r.revenue) || 0), 0);
     const totalBookings = rows.reduce((sum, r) => sum + r.bookings, 0);
     const totalCheckins = rows.reduce((sum, r) => sum + r.checkins, 0);
     const totalClients = rows.reduce((sum, r) => sum + r.total_clients, 0);
-    const totalRevenue = rows.reduce((sum, r) => sum + r.revenue, 0);
     const totalWash = rows.reduce((sum, r) => sum + r.wash, 0);
+    const totalProducts = rows.reduce((sum, r) => sum + (Number(r.products) || 0), 0);
     const checkinRate = totalClients > 0 ? Math.round((totalCheckins / totalClients) * 100) : 0;
 
-    const cfg = staffKpiConfigMap.get(person.id) || kpiConfig[person.type];
+    const cfg = mergeStaffKpiCfg(person, kpiConfig, staffKpiConfigMap);
+    const monthlyRevTarget = Number(cfg.monthlyRevenue);
+    const monthlyRevOk = Number.isFinite(monthlyRevTarget) ? monthlyRevTarget : 0;
+    const targetBookingsMonth = Number(cfg.monthlyBookings ?? 0);
     const checks = {
-      bookings: totalBookings >= cfg.monthlyBookings,
-      checkin: checkinRate >= cfg.monthlyCheckinRate
+      /* Lịch đặt hóa chất: đạt khi tổng trong kỳ >= ngưỡng (kể cả bằng ngưỡng). */
+      bookings: totalBookings >= targetBookingsMonth,
+      checkin: checkinRate >= cfg.monthlyCheckinRate,
+      revenue: totalRevenue >= monthlyRevOk,
+      products: totalProducts >= (cfg.monthlyProducts ?? 0)
     };
 
     if (person.type === "assistant") {
       checks.wash = totalWash >= cfg.weeklyWash * 4;
-      checks.revenue = totalRevenue >= cfg.monthlyRevenue;
     }
 
+    const checksActive = checksActiveMonth(cfg, person.type);
     const allPass = Object.values(checks).every(Boolean);
-    return { ...person, totalBookings, totalRevenue, totalWash, checkinRate, checks, allPass };
+    const presentDays = rows.length;
+    return {
+      ...person,
+      totalClients,
+      totalCheckins: totalCheckins,
+      presentDays,
+      totalBookings,
+      totalRevenue,
+      totalWash,
+      totalProducts,
+      checkinRate,
+      checks,
+      checksActive,
+      allPass
+    };
+  });
+}
+
+/**
+ * KPI theo khoảng [from, to] do route truyền (thường đủ 7 ngày Thứ Hai–Chủ nhật). Độc lập với KPI tháng.
+ * Ngưỡng weekly*; staff_kpi_settings do route nạp theo tháng neo (ví dụ tháng chứa Thứ Hai).
+ */
+function calculateKpiWeekByStaff(staff, attendanceRows, kpiConfig, staffKpiConfigMap = new Map()) {
+  const byStaff = new Map();
+  for (const row of attendanceRows) {
+    if (!byStaff.has(row.staff_id)) byStaff.set(row.staff_id, []);
+    byStaff.get(row.staff_id).push(row);
+  }
+
+  return staff.map((person) => {
+    const allRows = byStaff.get(person.id) || [];
+    const rows = allRows.filter((r) => r.present === 1);
+    const totalRevenue = allRows.reduce((sum, r) => sum + (Number(r.revenue) || 0), 0);
+    const totalBookings = rows.reduce((sum, r) => sum + r.bookings, 0);
+    const totalCheckins = rows.reduce((sum, r) => sum + r.checkins, 0);
+    const totalClients = rows.reduce((sum, r) => sum + r.total_clients, 0);
+    const totalWash = rows.reduce((sum, r) => sum + r.wash, 0);
+    const totalProducts = rows.reduce((sum, r) => sum + (Number(r.products) || 0), 0);
+    const checkinRate = totalClients > 0 ? Math.round((totalCheckins / totalClients) * 100) : 0;
+
+    const cfg = mergeStaffKpiCfg(person, kpiConfig, staffKpiConfigMap);
+    const targetBookingsWeek = Number(cfg.weeklyBookings ?? 0);
+    const checks = {
+      /* Lịch đặt hóa chất: đạt khi tổng trong tuần >= ngưỡng (kể cả bằng ngưỡng). */
+      bookings: totalBookings >= targetBookingsWeek,
+      checkin: checkinRate >= cfg.weeklyCheckinRate
+    };
+
+    if (person.type === "assistant") {
+      checks.wash = totalWash >= cfg.weeklyWash;
+    }
+
+    const checksActive = checksActiveWeek(cfg, person.type);
+    const allPass = Object.values(checks).every(Boolean);
+    const presentDays = rows.length;
+    return {
+      ...person,
+      totalClients,
+      totalCheckins: totalCheckins,
+      presentDays,
+      totalBookings,
+      totalRevenue,
+      totalWash,
+      totalProducts,
+      checkinRate,
+      checks,
+      checksActive,
+      allPass
+    };
   });
 }
 
@@ -78,4 +195,4 @@ function calculateSalaryReport(staff, attendanceRows, kpiRows, adjustments, kpiC
   });
 }
 
-module.exports = { calculateKpiByStaff, calculateSalaryReport };
+module.exports = { calculateKpiByStaff, calculateKpiWeekByStaff, calculateSalaryReport };

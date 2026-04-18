@@ -4,6 +4,7 @@ body,
   margin: 0;
   width: 100%;
   height: 100%;
+  overflow: hidden;
 }
 
 * {
@@ -20,13 +21,17 @@ body {
 .app {
   display: grid;
   grid-template-columns: 240px 1fr;
-  min-height: 100vh;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .sidebar {
   border-right: 1px solid #2a2f45;
   background: #181c27;
   padding: 20px;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .sidebar h1 {
@@ -107,7 +112,9 @@ body {
 
 .main {
   display: grid;
-  grid-template-rows: 70px 1fr;
+  grid-template-rows: 70px minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
 }
 
 .topbar {
@@ -147,6 +154,57 @@ body {
 
 .content {
   padding: 24px;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Kết quả KPI: bảng kéo full chiều ngang vùng nội dung */
+.kpi-results-page {
+  width: 100%;
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.kpi-period-card {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Trang KPI quản lí: hai card + bảng lấp phần còn lại — cuộn trong khung bảng */
+.kpi-manager-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+}
+
+.kpi-manager-page .card {
+  margin-bottom: 0;
+}
+
+.kpi-manager-page > .card:first-child {
+  flex-shrink: 0;
+}
+
+.kpi-manager-table-card {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.kpi-manager-table-card > .page-header,
+.kpi-manager-table-card > .row,
+.kpi-manager-table-card > .kpi-manager-unit-hint,
+.kpi-manager-table-card > p.muted {
+  flex-shrink: 0;
 }
 
 .card {
@@ -352,6 +410,70 @@ table.data-table th.col-allow-wrap {
   white-space: normal;
   overflow: visible;
   text-overflow: clip;
+}
+
+/* Cài đặt KPI: hai card thợ chính / thợ phụ — trái / phải */
+.kpi-config-two-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+  margin-bottom: 16px;
+  align-items: stretch;
+}
+
+@media (max-width: 960px) {
+  .kpi-config-two-cols {
+    grid-template-columns: 1fr;
+  }
+}
+
+.kpi-config-two-cols > .kpi-config-staff-card {
+  margin-bottom: 0;
+  min-width: 0;
+}
+
+.kpi-config-staff-select {
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+}
+
+/* Cài đặt KPI: 2 bảng thợ chính / thợ phụ — không ép min-width 760px */
+table.data-table.kpi-config-matrix {
+  min-width: 0;
+  width: 100%;
+  max-width: 520px;
+  table-layout: fixed;
+}
+
+.kpi-config-two-cols table.data-table.kpi-config-matrix {
+  max-width: 100%;
+}
+
+.kpi-config-table-wrap {
+  overflow-x: auto;
+  margin-bottom: 4px;
+}
+
+.kpi-config-table-title {
+  margin: 22px 0 10px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #eef2ff;
+}
+
+.kpi-config-table-title:first-of-type {
+  margin-top: 4px;
+}
+
+.kpi-config-input {
+  width: 100%;
+  max-width: 140px;
+}
+
+.kpi-config-matrix td.kpi-config-na {
+  text-align: center;
+  color: #5c6478;
 }
 
 .birthday-soon-row {
@@ -575,6 +697,93 @@ label.cccd-file-trigger.is-disabled {
   }
 }
 
+.attendance-tabs-card .attendance-page-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid #2a2f45;
+  padding-bottom: 10px;
+}
+
+.attendance-tab {
+  border: 1px solid #3a4260;
+  border-radius: 8px;
+  background: #2b3147;
+  color: #d1d5e8;
+  padding: 8px 14px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.attendance-tab.active {
+  background: #f0c040;
+  border-color: #f0c040;
+  color: #111;
+}
+
+.attendance-modal-panel--status {
+  width: min(560px, calc(100vw - 20px));
+  max-width: min(560px, calc(100vw - 20px));
+}
+
+.attendance-modal-panel--status .attendance-status-select {
+  width: 100%;
+  min-height: 48px;
+  padding: 12px 14px;
+  font-size: 16px;
+  line-height: 1.35;
+  box-sizing: border-box;
+}
+
+.attendance-modal-panel--status .attendance-modal-field input[type="number"] {
+  min-height: 44px;
+  padding: 10px 12px;
+  font-size: 15px;
+  box-sizing: border-box;
+}
+
+.attendance-status-table th:nth-child(2),
+.attendance-status-table td:nth-child(2) {
+  min-width: 12rem;
+  max-width: 24rem;
+  white-space: normal;
+  word-break: break-word;
+  vertical-align: middle;
+}
+
+.attendance-status-table th:nth-child(3),
+.attendance-status-table td:nth-child(3) {
+  min-width: 12rem;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.attendance-status-table td:nth-child(3) .primary {
+  padding: 10px 16px;
+  font-size: 15px;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.yesterday-report-table th,
+.yesterday-report-table td {
+  vertical-align: middle;
+}
+
+.yesterday-report-table .yesterday-report-select,
+.yesterday-report-table .yesterday-report-penalty {
+  min-width: 11rem;
+  min-height: 42px;
+  font-size: 15px;
+  padding: 8px 10px;
+  box-sizing: border-box;
+}
+
+.yesterday-report-table .yesterday-report-penalty:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .attendance-modal-field {
   display: flex;
   flex-direction: column;
@@ -661,4 +870,216 @@ label.cccd-file-trigger.is-disabled {
   margin-top: 14px;
   padding-top: 10px;
   border-top: 1px solid #2a2f45;
+}
+
+.salary-penalty-link {
+  background: none;
+  border: none;
+  color: #f87171;
+  cursor: pointer;
+  text-decoration: underline;
+  font: inherit;
+  padding: 0;
+}
+
+.salary-penalty-link:hover {
+  color: #fca5a5;
+}
+
+.penalty-history-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.penalty-history-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.72);
+  border: 0;
+  cursor: pointer;
+}
+
+.penalty-history-panel {
+  position: relative;
+  z-index: 1;
+  max-width: min(520px, 100%);
+  max-height: 85vh;
+  overflow: auto;
+  width: 100%;
+}
+
+/* Bảng KPI tuần/tháng: full width vùng nội dung, cột chia đều, viền từng ô */
+.table-scroll.kpi-table-scroll {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.kpi-attendance-table {
+  table-layout: fixed;
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid #2a2f45;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.kpi-attendance-table th,
+.kpi-attendance-table td {
+  border: 1px solid #2a2f45;
+  padding: 12px 8px;
+  vertical-align: middle;
+  text-align: center;
+  box-sizing: border-box;
+  min-width: 0;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+.kpi-attendance-table th {
+  font-size: 12px;
+  line-height: 1.3;
+  text-transform: none;
+  font-weight: 700;
+}
+
+.kpi-attendance-table th:first-child,
+.kpi-attendance-table td:first-child {
+  text-align: left;
+}
+
+/* KPI tuần/tháng: nền ô chỉ số (ô dữ liệu có sẵn), khi tiêu chí bật trong cài đặt KPI */
+.kpi-attendance-table .kpi-criterion-pass {
+  background: rgba(34, 197, 94, 0.2);
+}
+
+.kpi-attendance-table .kpi-criterion-fail {
+  background: rgba(239, 68, 68, 0.2);
+}
+
+/* Cuộn ngang/dọc trong khung (flex:1 trong card bảng) */
+.kpi-manager-grid-wrap {
+  overflow: auto;
+  max-width: 100%;
+  flex: 1;
+  min-height: 0;
+  border: 1px solid #2a2f45;
+  border-radius: 6px;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+.kpi-manager-table {
+  border-collapse: collapse;
+  font-size: 11px;
+  line-height: 1.35;
+  min-width: max-content;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+.kpi-manager-table th,
+.kpi-manager-table td {
+  border: 1px solid #2a2f45;
+  padding: 5px 6px;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.kpi-manager-table th {
+  background: #1e2333;
+  color: #98a2c0;
+  font-weight: 600;
+}
+
+/* Header bám trên cùng khi cuộn dọc trong khung */
+.kpi-manager-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+}
+
+/* Cột ngày: đủ rộng cho số kiểu 99.999 (nghìn đồng), căn giữa header / căn phải số */
+.kpi-manager-th-day,
+.kpi-manager-cell-day {
+  min-width: 3.25rem;
+  width: 3.25rem;
+  max-width: 3.75rem;
+  box-sizing: border-box;
+}
+
+.kpi-manager-th-day {
+  text-align: center;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+}
+
+.kpi-manager-cell-day {
+  text-align: right;
+  padding-left: 6px;
+  padding-right: 7px;
+}
+
+.kpi-manager-th-total {
+  min-width: 4rem;
+  text-align: right;
+  padding-left: 8px;
+  padding-right: 10px;
+}
+
+/* Tên: hẹp hơn cột ngày ×2–3, ellipsis nếu dài (xem full ở title) */
+.kpi-manager-sticky-name {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: #181c27;
+  box-shadow: 4px 0 8px rgba(0, 0, 0, 0.28);
+  width: 6.75rem;
+  min-width: 5rem;
+  max-width: 6.75rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-left: 6px;
+  padding-right: 6px;
+}
+
+.kpi-manager-table thead .kpi-manager-sticky-name {
+  z-index: 4;
+  background: #1e2333;
+}
+
+/* Tổng: luôn thấy khi kéo ngang */
+.kpi-manager-sticky-total {
+  position: sticky;
+  right: 0;
+  z-index: 2;
+  background: #181c27;
+  box-shadow: -4px 0 8px rgba(0, 0, 0, 0.28);
+}
+
+.kpi-manager-table thead .kpi-manager-sticky-total {
+  z-index: 4;
+  background: #1e2333;
+}
+
+.kpi-manager-cell-total.kpi-manager-sticky-total {
+  background: rgba(24, 28, 39, 0.98);
+}
+
+.kpi-manager-cell-num {
+  text-align: right;
+}
+
+.kpi-manager-cell-total {
+  font-weight: 600;
+}
+
+.kpi-manager-unit-hint {
+  line-height: 1.35;
 }

@@ -4,7 +4,7 @@ const fs = require("fs");
 const crypto = require("crypto");
 const multer = require("multer");
 const { all, get, run } = require("../config/db");
-const { calculateKpiByStaff, calculateSalaryReport } = require("../services/reportService");
+const { calculateKpiByStaff, calculateKpiWeekByStaff, calculateSalaryReport } = require("../services/reportService");
 
 const router = express.Router();
 
@@ -232,20 +232,23 @@ router.delete("/staff/:id", async (req, res, next) => {
 
 router.get("/attendance", async (req, res, next) => {
   try {
-    const { date, month, branchId } = req.query;
+    const { date, month, branchId, from, to } = req.query;
     let query = `
       SELECT a.* FROM attendance a
       JOIN staff s ON s.id = a.staff_id
       WHERE 1 = 1
     `;
     const params = [];
-    if (date) {
+    if (from && to) {
+      query += " AND a.date >= ? AND a.date <= ?";
+      params.push(from, to);
+    } else if (date) {
       query += " AND a.date = ?";
       params.push(date);
-    }
-    if (month) {
-      query += " AND a.date LIKE ?";
-      params.push(`${month}%`);
+    } else if (month) {
+      const { from, to } = parseMonthRange(month);
+      query += " AND a.date >= ? AND a.date <= ?";
+      params.push(from, to);
     }
     if (branchId) {
       query += " AND s.branch_id = ?";
@@ -260,44 +263,110 @@ router.get("/attendance", async (req, res, next) => {
   }
 });
 
+function parseAttendancePresence(body) {
+  if (body.presenceStatus === "absent" || body.presenceStatus === "present" || body.presenceStatus === "late") {
+    return body.presenceStatus;
+  }
+  if (body.present === false || body.present === 0) return "absent";
+  return "present";
+}
+
+function formatViDateFromIso(iso) {
+  const [y, m, d] = String(iso).split("-");
+  if (!y || !m || !d) return iso;
+  return `${d}/${m}/${y}`;
+}
+
+function isEmployedOnDate(staff, isoDate) {
+  if (staff.start_date && staff.start_date > isoDate) return false;
+  if (staff.end_date && staff.end_date < isoDate) return false;
+  return true;
+}
+
 router.put("/attendance", async (req, res, next) => {
   try {
-    const { staffId, date, present, totalClients, checkins, products, chemicalBookings, washBookings } = req.body;
+    const {
+      staffId,
+      date,
+      totalClients,
+      checkins,
+      products,
+      chemicalBookings: rawChemical,
+      washBookings: rawWash,
+      lateMinutes: bodyLateMin,
+      latePenalty: bodyLatePenalty
+    } = req.body;
+    const presenceStatus = parseAttendancePresence(req.body);
     const staff = await get("SELECT type, start_date, end_date FROM staff WHERE id = ?", [staffId]);
     if (!staff) return res.status(404).json({ message: "Staff not found" });
     if (date < staff.start_date || (staff.end_date && date > staff.end_date)) {
       return res.status(400).json({ message: "Attendance date is outside employment range" });
     }
-    if (!Array.isArray(chemicalBookings) || !Array.isArray(washBookings)) {
+
+    const chemicalBookings = Array.isArray(rawChemical) ? rawChemical : null;
+    const washBookings = Array.isArray(rawWash) ? rawWash : null;
+    if (chemicalBookings === null || washBookings === null) {
       return res.status(400).json({ message: "Thiếu chemicalBookings hoặc washBookings" });
     }
 
-    const CHEM_MIN = 450000;
+    let absent = presenceStatus === "absent";
+    const hasAnyChemicalBooking = chemicalBookings.length > 0;
+    const hasAnyWashBooking = staff.type === "assistant" && washBookings.length > 0;
+    if (absent && (hasAnyChemicalBooking || hasAnyWashBooking)) {
+      absent = false;
+    }
+    const late = presenceStatus === "late";
+
+    let lateMinutes = null;
+    let latePenalty = null;
+    if (late) {
+      lateMinutes = Math.round(Number(bodyLateMin));
+      latePenalty = Math.round(Number(bodyLatePenalty));
+      if (!Number.isFinite(lateMinutes) || lateMinutes < 0) {
+        return res.status(400).json({ message: "Số phút đi muộn không hợp lệ" });
+      }
+      if (!Number.isFinite(latePenalty) || latePenalty < 0) {
+        return res.status(400).json({ message: "Số tiền phạt đi muộn không hợp lệ" });
+      }
+    }
+
+    const present = absent ? 0 : 1;
+
+    const CHEMICAL_MIN_VND = 450000;
+    /** Mỗi dòng gội có doanh thu từ mức này trở lên được tính 2 lịch (thay vì 1). */
+    const WASH_DOUBLE_COUNT_FROM_VND = 350000;
     const chemical = chemicalBookings.map((b) => ({ revenue: Math.round(Number(b.revenue)) }));
     const washLines = staff.type === "assistant" ? washBookings.map((b) => ({ revenue: Math.round(Number(b.revenue)) })) : [];
 
     for (const b of chemical) {
-      if (!Number.isFinite(b.revenue) || b.revenue <= CHEM_MIN) {
-        return res.status(400).json({ message: "Mỗi lịch đặt hóa chất phải có doanh thu lớn hơn 450.000 VND" });
+      if (!Number.isFinite(b.revenue) || b.revenue < CHEMICAL_MIN_VND) {
+        return res.status(400).json({
+          message: "Mỗi lịch đặt hóa chất phải có doanh thu từ 450.000 VND trở lên (≥ 450.000 VND)"
+        });
       }
     }
     if (staff.type === "assistant") {
       for (const b of washLines) {
         if (!Number.isFinite(b.revenue) || b.revenue <= 0) {
-          return res.status(400).json({ message: "Mỗi lịch đặt gội phải có doanh thu lớn hơn 0" });
+          return res.status(400).json({
+            message: "Mỗi lịch đặt gội phải có doanh thu lớn hơn 0 VND."
+          });
         }
       }
     }
 
     const bookings = chemical.length;
-    const wash = washLines.length;
+    const wash =
+      staff.type === "assistant"
+        ? washLines.reduce((sum, b) => sum + (b.revenue >= WASH_DOUBLE_COUNT_FROM_VND ? 2 : 1), 0)
+        : 0;
     const revenue = [...chemical, ...washLines].reduce((s, b) => s + b.revenue, 0);
     const chemicalJson = JSON.stringify(chemical);
     const washJson = JSON.stringify(washLines);
 
     await run(
-      `INSERT INTO attendance (staff_id, date, present, bookings, total_clients, checkins, products, revenue, wash, chemical_bookings_json, wash_bookings_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO attendance (staff_id, date, present, bookings, total_clients, checkins, products, revenue, wash, chemical_bookings_json, wash_bookings_json, late_minutes, late_penalty)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(staff_id, date) DO UPDATE SET
          present=excluded.present,
          bookings=excluded.bookings,
@@ -307,7 +376,9 @@ router.put("/attendance", async (req, res, next) => {
          revenue=excluded.revenue,
          wash=excluded.wash,
          chemical_bookings_json=excluded.chemical_bookings_json,
-         wash_bookings_json=excluded.wash_bookings_json`,
+         wash_bookings_json=excluded.wash_bookings_json,
+         late_minutes=excluded.late_minutes,
+         late_penalty=excluded.late_penalty`,
       [
         staffId,
         date,
@@ -319,11 +390,23 @@ router.put("/attendance", async (req, res, next) => {
         revenue,
         wash,
         chemicalJson,
-        washJson
+        washJson,
+        late ? lateMinutes : null,
+        late ? latePenalty : null
       ]
     );
     const row = await get("SELECT * FROM attendance WHERE staff_id = ? AND date = ?", [staffId, date]);
-    res.json(row);
+    await run("DELETE FROM salary_adjustments WHERE attendance_id = ?", [row.id]);
+    if (late && latePenalty > 0) {
+      const month = date.slice(0, 7);
+      const note = `Đi muộn ${formatViDateFromIso(date)}: ${lateMinutes} phút`;
+      await run(
+        `INSERT INTO salary_adjustments (staff_id, month, type, amount, note, attendance_id) VALUES (?, ?, 'penalty', ?, ?, ?)`,
+        [staffId, month, latePenalty, note, row.id]
+      );
+    }
+    const rowOut = await get("SELECT * FROM attendance WHERE staff_id = ? AND date = ?", [staffId, date]);
+    res.json(rowOut);
   } catch (error) {
     next(error);
   }
@@ -342,6 +425,53 @@ router.put("/kpi-config", async (req, res, next) => {
   try {
     await run("UPDATE kpi_config SET config_json = ? WHERE id = 1", [JSON.stringify(req.body)]);
     res.json(req.body);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/** Nhân viên được gán chạy KPI quản lí (theo chi nhánh). */
+router.get("/manager-kpi-staff", async (req, res, next) => {
+  try {
+    const { branchId } = req.query;
+    if (!branchId) return res.status(400).json({ message: "branchId is required" });
+    const rows = await all(
+      `SELECT s.id, s.name, s.type
+       FROM manager_kpi_staff m
+       JOIN staff s ON s.id = m.staff_id
+       WHERE s.branch_id = ?
+       ORDER BY s.name`,
+      [branchId]
+    );
+    res.json(rows);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/manager-kpi-staff", async (req, res, next) => {
+  try {
+    const { staffId, branchId } = req.body;
+    if (!staffId || branchId == null || branchId === "") {
+      return res.status(400).json({ message: "staffId and branchId are required" });
+    }
+    const staff = await get("SELECT id, branch_id FROM staff WHERE id = ?", [staffId]);
+    if (!staff) return res.status(404).json({ message: "Staff not found" });
+    if (Number(staff.branch_id) !== Number(branchId)) {
+      return res.status(400).json({ message: "Nhân viên không thuộc chi nhánh đang chọn" });
+    }
+    await run("INSERT OR IGNORE INTO manager_kpi_staff (staff_id) VALUES (?)", [staffId]);
+    const row = await get("SELECT id, name, type FROM staff WHERE id = ?", [staffId]);
+    res.status(201).json(row);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete("/manager-kpi-staff/:staffId", async (req, res, next) => {
+  try {
+    await run("DELETE FROM manager_kpi_staff WHERE staff_id = ?", [req.params.staffId]);
+    res.status(204).send();
   } catch (error) {
     next(error);
   }
@@ -532,10 +662,10 @@ router.put("/staff-personal-info", async (req, res, next) => {
 
 router.post("/salary-adjustments", async (req, res, next) => {
   try {
-    const { staffId, month, type, amount, note } = req.body;
+    const { staffId, month, type, amount, note, attendanceId, dailyReportId } = req.body;
     const result = await run(
-      "INSERT INTO salary_adjustments (staff_id, month, type, amount, note) VALUES (?, ?, ?, ?, ?)",
-      [staffId, month, type, amount, note || null]
+      "INSERT INTO salary_adjustments (staff_id, month, type, amount, note, attendance_id, daily_report_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [staffId, month, type, amount, note || null, attendanceId ?? null, dailyReportId ?? null]
     );
     const row = await get("SELECT * FROM salary_adjustments WHERE id = ?", [result.id]);
     res.status(201).json(row);
@@ -565,7 +695,7 @@ router.put("/salary-adjustments/bulk", async (req, res, next) => {
 
 router.get("/salary-adjustments", async (req, res, next) => {
   try {
-    const { month, staffId } = req.query;
+    const { month, staffId, type } = req.query;
     let query = "SELECT * FROM salary_adjustments WHERE 1=1";
     const params = [];
     if (month) {
@@ -575,6 +705,10 @@ router.get("/salary-adjustments", async (req, res, next) => {
     if (staffId) {
       query += " AND staff_id = ?";
       params.push(staffId);
+    }
+    if (type) {
+      query += " AND type = ?";
+      params.push(type);
     }
     query += " ORDER BY id DESC";
     const rows = await all(query, params);
@@ -599,15 +733,50 @@ router.get("/reports/kpi", async (req, res, next) => {
     const attendanceRows = await all(
       `SELECT a.* FROM attendance a
        JOIN staff s ON s.id = a.staff_id
-       WHERE a.date LIKE ?
+       WHERE a.date >= ? AND a.date <= ?
          ${branchId ? "AND s.branch_id = ?" : ""}
          AND a.date >= s.start_date
          AND (s.end_date IS NULL OR s.end_date = '' OR a.date <= s.end_date)`,
-      branchId ? [`${month}%`, branchId] : [`${month}%`]
+      branchId ? [from, to, branchId] : [from, to]
     );
     const kpiConfig = JSON.parse((await get("SELECT config_json FROM kpi_config WHERE id = 1")).config_json);
     const staffKpiMap = await getStaffKpiMap(month, staffRows);
     const data = calculateKpiByStaff(staffRows, attendanceRows, kpiConfig, staffKpiMap);
+    res.json(data);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/reports/kpi-week", async (req, res, next) => {
+  try {
+    const { from, to, branchId } = req.query;
+    if (!from || !to) {
+      return res.status(400).json({ message: "Query from and to (YYYY-MM-DD) are required" });
+    }
+    /* Tổng chỉ số = đúng [from, to] (cả tuần). KPI tuần độc lập KPI tháng: không dùng tháng của `to`
+     * (Chủ nhật) để nạp staff_kpi_settings — khi tuần cắt 2 tháng, neo theo tháng chứa Thứ Hai (`from`). */
+    const staffKpiLookupMonth = from.slice(0, 7);
+    const staffRows = branchId
+      ? await all(
+          `SELECT * FROM staff s
+           WHERE s.branch_id = ? AND ${overlapsEmploymentClause("?", "?")}
+           ORDER BY s.id`,
+          [branchId, to, from]
+        )
+      : await all(`SELECT * FROM staff s WHERE ${overlapsEmploymentClause("?", "?")} ORDER BY s.id`, [to, from]);
+    const attendanceRows = await all(
+      `SELECT a.* FROM attendance a
+       JOIN staff s ON s.id = a.staff_id
+       WHERE a.date >= ? AND a.date <= ?
+         ${branchId ? "AND s.branch_id = ?" : ""}
+         AND a.date >= s.start_date
+         AND (s.end_date IS NULL OR s.end_date = '' OR a.date <= s.end_date)`,
+      branchId ? [from, to, branchId] : [from, to]
+    );
+    const kpiConfig = JSON.parse((await get("SELECT config_json FROM kpi_config WHERE id = 1")).config_json);
+    const staffKpiMap = await getStaffKpiMap(staffKpiLookupMonth, staffRows);
+    const data = calculateKpiWeekByStaff(staffRows, attendanceRows, kpiConfig, staffKpiMap);
     res.json(data);
   } catch (error) {
     next(error);
@@ -629,11 +798,11 @@ router.get("/reports/salary", async (req, res, next) => {
     const attendanceRows = await all(
       `SELECT a.* FROM attendance a
        JOIN staff s ON s.id = a.staff_id
-       WHERE a.date LIKE ?
+       WHERE a.date >= ? AND a.date <= ?
          ${branchId ? "AND s.branch_id = ?" : ""}
          AND a.date >= s.start_date
          AND (s.end_date IS NULL OR s.end_date = '' OR a.date <= s.end_date)`,
-      branchId ? [`${month}%`, branchId] : [`${month}%`]
+      branchId ? [from, to, branchId] : [from, to]
     );
     const adjustments = await all(
       `SELECT sa.* FROM salary_adjustments sa
@@ -669,11 +838,11 @@ router.post("/hold-deductions/apply-month", async (req, res, next) => {
     const attendanceRows = await all(
       `SELECT a.* FROM attendance a
        JOIN staff s ON s.id = a.staff_id
-       WHERE a.date LIKE ?
+       WHERE a.date >= ? AND a.date <= ?
          ${branchId ? "AND s.branch_id = ?" : ""}
          AND a.date >= s.start_date
          AND (s.end_date IS NULL OR s.end_date = '' OR a.date <= s.end_date)`,
-      branchId ? [`${month}%`, branchId] : [`${month}%`]
+      branchId ? [from, to, branchId] : [from, to]
     );
     const adjustments = await all(
       `SELECT sa.* FROM salary_adjustments sa
@@ -696,6 +865,140 @@ router.post("/hold-deductions/apply-month", async (req, res, next) => {
       );
     }
     res.json({ ok: true, totalStaff: salaries.length });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/daily-reports", async (req, res, next) => {
+  try {
+    const { date, branchId } = req.query;
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(String(date))) {
+      return res.status(400).json({ message: "date (YYYY-MM-DD) is required" });
+    }
+    if (branchId == null || branchId === "") {
+      return res.status(400).json({ message: "branchId is required" });
+    }
+
+    const staffRows = await all(
+      `SELECT * FROM staff WHERE branch_id = ? AND status = 'working' ORDER BY name`,
+      [branchId]
+    );
+    const filtered = staffRows.filter((s) => isEmployedOnDate(s, date));
+    const reports = await all("SELECT * FROM daily_reports WHERE report_date = ?", [date]);
+    const byStaff = new Map(reports.map((r) => [r.staff_id, r]));
+
+    res.json(
+      filtered.map((s) => {
+        const r = byStaff.get(s.id);
+        return {
+          staffId: s.id,
+          name: s.name,
+          type: s.type,
+          report: r
+            ? {
+                id: r.id,
+                workStatus: r.work_status,
+                workPenalty: r.work_penalty,
+                videoStatus: r.video_status,
+                videoPenalty: r.video_penalty
+              }
+            : null
+        };
+      })
+    );
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.put("/daily-reports", async (req, res, next) => {
+  try {
+    const { reportDate, branchId, items } = req.body;
+    if (!reportDate || !/^\d{4}-\d{2}-\d{2}$/.test(String(reportDate))) {
+      return res.status(400).json({ message: "reportDate (YYYY-MM-DD) is required" });
+    }
+    if (branchId == null || branchId === "") {
+      return res.status(400).json({ message: "branchId is required" });
+    }
+    if (!Array.isArray(items)) {
+      return res.status(400).json({ message: "items array is required" });
+    }
+
+    const month = String(reportDate).slice(0, 7);
+
+    for (const item of items) {
+      const { staffId, workStatus, workPenalty, videoStatus, videoPenalty } = item;
+      if (!staffId) {
+        return res.status(400).json({ message: "each item needs staffId" });
+      }
+      if (!["reported", "not_reported"].includes(workStatus)) {
+        return res.status(400).json({ message: "invalid workStatus" });
+      }
+      if (!["posted", "not_posted"].includes(videoStatus)) {
+        return res.status(400).json({ message: "invalid videoStatus" });
+      }
+
+      const st = await get("SELECT id, branch_id, start_date, end_date FROM staff WHERE id = ?", [staffId]);
+      if (!st || st.branch_id !== Number(branchId)) {
+        return res.status(400).json({ message: "staff not in branch" });
+      }
+      if (!isEmployedOnDate(st, reportDate)) {
+        return res.status(400).json({ message: "date outside employment range" });
+      }
+
+      let wp = null;
+      if (workStatus === "not_reported") {
+        if (workPenalty !== "" && workPenalty != null && workPenalty !== undefined) {
+          wp = Math.round(Number(workPenalty));
+          if (!Number.isFinite(wp) || wp < 0) {
+            return res.status(400).json({ message: "workPenalty invalid" });
+          }
+        }
+      }
+
+      let vp = null;
+      if (videoStatus === "not_posted") {
+        if (videoPenalty !== "" && videoPenalty != null && videoPenalty !== undefined) {
+          vp = Math.round(Number(videoPenalty));
+          if (!Number.isFinite(vp) || vp < 0) {
+            return res.status(400).json({ message: "videoPenalty invalid" });
+          }
+        }
+      }
+
+      await run(
+        `INSERT INTO daily_reports (staff_id, report_date, work_status, work_penalty, video_status, video_penalty)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(staff_id, report_date) DO UPDATE SET
+           work_status = excluded.work_status,
+           work_penalty = excluded.work_penalty,
+           video_status = excluded.video_status,
+           video_penalty = excluded.video_penalty`,
+        [staffId, reportDate, workStatus, wp, videoStatus, vp]
+      );
+
+      const dr = await get("SELECT id FROM daily_reports WHERE staff_id = ? AND report_date = ?", [staffId, reportDate]);
+      await run("DELETE FROM salary_adjustments WHERE daily_report_id = ?", [dr.id]);
+
+      const viNote = formatViDateFromIso(reportDate);
+      if (workStatus === "not_reported" && wp != null && wp > 0) {
+        await run(
+          `INSERT INTO salary_adjustments (staff_id, month, type, amount, note, attendance_id, daily_report_id)
+           VALUES (?, ?, 'penalty', ?, ?, NULL, ?)`,
+          [staffId, month, wp, `Báo cáo công việc (${viNote}): không báo cáo`, dr.id]
+        );
+      }
+      if (videoStatus === "not_posted" && vp != null && vp > 0) {
+        await run(
+          `INSERT INTO salary_adjustments (staff_id, month, type, amount, note, attendance_id, daily_report_id)
+           VALUES (?, ?, 'penalty', ?, ?, NULL, ?)`,
+          [staffId, month, vp, `Báo cáo video (${viNote}): không đăng`, dr.id]
+        );
+      }
+    }
+
+    res.json({ ok: true });
   } catch (error) {
     next(error);
   }

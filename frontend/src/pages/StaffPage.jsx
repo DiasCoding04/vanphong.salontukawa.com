@@ -37,12 +37,14 @@ export function StaffPage({ data, selectedBranchId }) {
     setError("");
   }
 
+  const needsBaseSalary = form.type === "assistant";
+
   async function handleSave() {
     if (!form.name.trim()) {
       setError("Vui l\u00f2ng nh\u1eadp H\u1ecd t\u00ean.");
       return;
     }
-    if (!form.baseSalary || Number(form.baseSalary) <= 0) {
+    if (needsBaseSalary && (!form.baseSalary || Number(form.baseSalary) <= 0)) {
       setError("Vui l\u00f2ng nh\u1eadp L\u01b0\u01a1ng c\u1ee9ng h\u1ee3p l\u1ec7.");
       return;
     }
@@ -63,7 +65,7 @@ export function StaffPage({ data, selectedBranchId }) {
       name: form.name.trim(),
       type: form.type,
       branchId: selectedBranchId,
-      baseSalary: Number(form.baseSalary),
+      baseSalary: needsBaseSalary ? Number(form.baseSalary) : 0,
       holdRemaining: Number(form.holdRemaining),
       accountNumber: form.accountNumber.trim(),
       status: form.status,
@@ -138,7 +140,9 @@ export function StaffPage({ data, selectedBranchId }) {
                   <td>{s.name}</td>
                   <td><span className={`badge ${s.type === "main" ? "badge-blue" : "badge-yellow"}`}>{s.type === "main" ? "Th\u1ee3 ch\u00ednh" : "Th\u1ee3 ph\u1ee5"}</span></td>
                   <td>{data.branches.find((b) => b.id === s.branchId)?.name || "-"}</td>
-                  <td>{new Intl.NumberFormat("vi-VN").format(s.baseSalary)} VND</td>
+                  <td className={s.type === "main" ? "muted" : undefined}>
+                    {s.type === "main" ? "—" : `${new Intl.NumberFormat("vi-VN").format(s.baseSalary)} VND`}
+                  </td>
                   <td>{new Intl.NumberFormat("vi-VN").format(s.holdRemaining || 0)} VND</td>
                   <td>{s.accountNumber || "-"}</td>
                   <td>{s.startDate || "-"}</td>
@@ -172,7 +176,17 @@ export function StaffPage({ data, selectedBranchId }) {
 
           <label className="field">
             <span className="muted">{"Lo\u1ea1i th\u1ee3"}</span>
-            <select value={form.type} onChange={(e) => setField("type", e.target.value)}>
+            <select
+              value={form.type}
+              onChange={(e) => {
+                const v = e.target.value;
+                setForm((prev) => ({
+                  ...prev,
+                  type: v,
+                  baseSalary: v === "main" ? "" : prev.baseSalary
+                }));
+              }}
+            >
               <option value="main">{"Th\u1ee3 ch\u00ednh"}</option>
               <option value="assistant">{"Th\u1ee3 ph\u1ee5"}</option>
             </select>
@@ -183,10 +197,19 @@ export function StaffPage({ data, selectedBranchId }) {
             <input value={data.branches.find((b) => b.id === selectedBranchId)?.name || ""} disabled />
           </label>
 
-          <label className="field">
-            <span className="muted">{"L\u01b0\u01a1ng c\u1ee9ng (VND) *"}</span>
-            <input type="number" value={form.baseSalary} onChange={(e) => setField("baseSalary", e.target.value)} />
-          </label>
+          {needsBaseSalary ? (
+            <label className="field">
+              <span className="muted">{"L\u01b0\u01a1ng c\u1ee9ng (VND) *"}</span>
+              <input type="number" min={0} value={form.baseSalary} onChange={(e) => setField("baseSalary", e.target.value)} />
+            </label>
+          ) : (
+            <div className="field">
+              <span className="muted">{"L\u01b0\u01a1ng c\u1ee9ng"}</span>
+              <p className="muted" style={{ margin: "8px 0 0", fontSize: 13 }}>
+                Thợ chính không nhập lương cứng; hệ thống lưu 0 VND.
+              </p>
+            </div>
+          )}
 
           <label className="field">
             <span className="muted">{"Ti\u1ec1n giam l\u01b0\u01a1ng c\u00f2n l\u1ea1i (VND) *"}</span>

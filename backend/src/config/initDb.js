@@ -4,14 +4,22 @@ const defaultKpiConfig = {
   weeklyStartDay: 1,
   monthlyStartDate: 1,
   kpiStartDate: "2024-01-01",
-  main: { weeklyBookings: 20, weeklyCheckinRate: 80, monthlyBookings: 80, monthlyCheckinRate: 80 },
+  main: {
+    weeklyBookings: 20,
+    weeklyCheckinRate: 80,
+    monthlyBookings: 80,
+    monthlyCheckinRate: 80,
+    monthlyRevenue: 10000000,
+    monthlyProducts: 0
+  },
   assistant: {
     weeklyBookings: 15,
     weeklyCheckinRate: 75,
     weeklyWash: 30,
     monthlyBookings: 60,
     monthlyCheckinRate: 75,
-    monthlyRevenue: 10000000
+    monthlyRevenue: 10000000,
+    monthlyProducts: 0
   },
   rewards: { allPassBonus: 500000, passRate80Bonus: 200000 },
   penalties: { failKpiPenalty: 200000 }
@@ -70,6 +78,12 @@ async function initDb() {
   if (attendanceCols.length && !attendanceCols.includes("wash_bookings_json")) {
     await run("ALTER TABLE attendance ADD COLUMN wash_bookings_json TEXT DEFAULT '[]'");
   }
+  if (attendanceCols.length && !attendanceCols.includes("late_minutes")) {
+    await run("ALTER TABLE attendance ADD COLUMN late_minutes INTEGER");
+  }
+  if (attendanceCols.length && !attendanceCols.includes("late_penalty")) {
+    await run("ALTER TABLE attendance ADD COLUMN late_penalty INTEGER");
+  }
 
   await run(`CREATE TABLE IF NOT EXISTS salary_adjustments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -80,6 +94,26 @@ async function initDb() {
     note TEXT,
     FOREIGN KEY(staff_id) REFERENCES staff(id)
   )`);
+
+  await run(`CREATE TABLE IF NOT EXISTS daily_reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    staff_id INTEGER NOT NULL,
+    report_date TEXT NOT NULL,
+    work_status TEXT NOT NULL CHECK(work_status IN ('reported','not_reported')),
+    work_penalty INTEGER,
+    video_status TEXT NOT NULL CHECK(video_status IN ('posted','not_posted')),
+    video_penalty INTEGER,
+    UNIQUE(staff_id, report_date),
+    FOREIGN KEY(staff_id) REFERENCES staff(id)
+  )`);
+
+  const salaryAdjCols = await runAndGetColsForTable("salary_adjustments");
+  if (salaryAdjCols.length && !salaryAdjCols.includes("attendance_id")) {
+    await run("ALTER TABLE salary_adjustments ADD COLUMN attendance_id INTEGER REFERENCES attendance(id) ON DELETE CASCADE");
+  }
+  if (salaryAdjCols.length && !salaryAdjCols.includes("daily_report_id")) {
+    await run("ALTER TABLE salary_adjustments ADD COLUMN daily_report_id INTEGER REFERENCES daily_reports(id) ON DELETE CASCADE");
+  }
 
   await run(`CREATE TABLE IF NOT EXISTS hold_deductions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -137,6 +171,11 @@ async function initDb() {
        ('Hoàng Văn Em', 'main', 2, 5000000, 'working', '2024-04-01', NULL, '001100005', 1800000)`
     );
   }
+
+  await run(`CREATE TABLE IF NOT EXISTS manager_kpi_staff (
+    staff_id INTEGER PRIMARY KEY,
+    FOREIGN KEY(staff_id) REFERENCES staff(id) ON DELETE CASCADE
+  )`);
 
   const hasKpi = await get("SELECT COUNT(*) AS total FROM kpi_config");
   if (hasKpi.total === 0) {

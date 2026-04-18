@@ -43,3 +43,56 @@ export function isBirthdayOnVietnamCalendarDay(birthDateStr, targetMonth, target
   if (!p) return false;
   return p.month === targetMonth && p.day === targetDay;
 }
+
+/** Cộng/trừ ngày trên chuỗi YYYY-MM-DD (múi +07). */
+export function addIsoDays(isoDate, deltaDays) {
+  const d = new Date(`${isoDate}T12:00:00+07:00`);
+  d.setDate(d.getDate() + deltaDays);
+  return vietnamCalendarDateString(d);
+}
+
+/** Thứ Hai → Chủ nhật chứa `isoDate` (tuần theo lịch VN). */
+export function getMondaySundayIsoWeekContaining(isoDate) {
+  const d = new Date(`${isoDate}T12:00:00+07:00`);
+  const dow = d.getDay();
+  const daysFromMonday = (dow + 6) % 7;
+  const weekStart = addIsoDays(isoDate, -daysFromMonday);
+  const weekEnd = addIsoDays(weekStart, 6);
+  return { weekStart, weekEnd };
+}
+
+/** Ngày đầu tháng (YYYY-MM-01) từ chuỗi "YYYY-MM". */
+export function firstDayOfMonthIso(monthYyyyMm) {
+  const [y, m] = String(monthYyyyMm || "")
+    .split("-")
+    .map(Number);
+  if (!y || !m) return null;
+  return `${y}-${String(m).padStart(2, "0")}-01`;
+}
+
+/** Ngày cuối tháng của chuỗi "YYYY-MM". */
+export function lastDayOfMonthIso(monthYyyyMm) {
+  const [y, m] = monthYyyyMm.split("-").map(Number);
+  const last = new Date(y, m, 0);
+  return `${y}-${String(m).padStart(2, "0")}-${String(last.getDate()).padStart(2, "0")}`;
+}
+
+/**
+ * Nhân viên có làm việc ít nhất một ngày trong tháng lịch (giao [đầu tháng, cuối tháng] với [startDate, endDate]).
+ * Khớp logic backend `overlapsEmploymentClause` + KPI tháng.
+ */
+export function employmentOverlapsMonth(staff, monthYyyyMm) {
+  const from = firstDayOfMonthIso(monthYyyyMm);
+  const to = lastDayOfMonthIso(monthYyyyMm);
+  if (!from || !to) return false;
+  if (staff.startDate && staff.startDate > to) return false;
+  if (staff.endDate && staff.endDate < from) return false;
+  return true;
+}
+
+/** Giao khoảng ngày ISO [from, to] với khoảng làm việc nhân viên. */
+export function employmentOverlapsIsoRange(staff, fromIso, toIso) {
+  if (staff.startDate && staff.startDate > toIso) return false;
+  if (staff.endDate && staff.endDate < fromIso) return false;
+  return true;
+}
