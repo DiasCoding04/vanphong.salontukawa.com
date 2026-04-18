@@ -61,16 +61,19 @@ function calculateKpiByStaff(staff, attendanceRows, kpiConfig, staffKpiConfigMap
     const monthlyRevTarget = Number(cfg.monthlyRevenue);
     const monthlyRevOk = Number.isFinite(monthlyRevTarget) ? monthlyRevTarget : 0;
     const targetBookingsMonth = Number(cfg.monthlyBookings ?? 0);
+    const targetCheckinMonth = Number(cfg.monthlyCheckinRate ?? 0);
+    const targetProductsMonth = Number(cfg.monthlyProducts ?? 0);
+    const targetWashMonth = Number(cfg.weeklyWash ?? 0) * 4;
+    /** Mọi chỉ tiêu KPI tháng: đạt khi thực tế >= ngưỡng trong cài đặt (kể cả bằng ngưỡng). */
     const checks = {
-      /* Lịch đặt hóa chất: đạt khi tổng trong kỳ >= ngưỡng (kể cả bằng ngưỡng). */
       bookings: totalBookings >= targetBookingsMonth,
-      checkin: checkinRate >= cfg.monthlyCheckinRate,
+      checkin: checkinRate >= targetCheckinMonth,
       revenue: totalRevenue >= monthlyRevOk,
-      products: totalProducts >= (cfg.monthlyProducts ?? 0)
+      products: totalProducts >= targetProductsMonth
     };
 
     if (person.type === "assistant") {
-      checks.wash = totalWash >= cfg.weeklyWash * 4;
+      checks.wash = totalWash >= targetWashMonth;
     }
 
     const checksActive = checksActiveMonth(cfg, person.type);
@@ -117,14 +120,16 @@ function calculateKpiWeekByStaff(staff, attendanceRows, kpiConfig, staffKpiConfi
 
     const cfg = mergeStaffKpiCfg(person, kpiConfig, staffKpiConfigMap);
     const targetBookingsWeek = Number(cfg.weeklyBookings ?? 0);
+    const targetCheckinWeek = Number(cfg.weeklyCheckinRate ?? 0);
+    const targetWashWeek = Number(cfg.weeklyWash ?? 0);
+    /** Mọi chỉ tiêu KPI tuần: đạt khi thực tế >= ngưỡng trong cài đặt (kể cả bằng ngưỡng). */
     const checks = {
-      /* Lịch đặt hóa chất: đạt khi tổng trong tuần >= ngưỡng (kể cả bằng ngưỡng). */
       bookings: totalBookings >= targetBookingsWeek,
-      checkin: checkinRate >= cfg.weeklyCheckinRate
+      checkin: checkinRate >= targetCheckinWeek
     };
 
     if (person.type === "assistant") {
-      checks.wash = totalWash >= cfg.weeklyWash;
+      checks.wash = totalWash >= targetWashWeek;
     }
 
     const checksActive = checksActiveWeek(cfg, person.type);

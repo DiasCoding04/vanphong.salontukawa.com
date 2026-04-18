@@ -257,8 +257,8 @@ export function KpiConfigPage({ data, selectedBranchId }) {
                   </table>
                 </div>
                 <p className="muted small" style={{ marginTop: 8, marginBottom: 0 }}>
-                  Cột «Lịch đặt hóa chất» trong KPI tuần / KPI tháng so với ngưỡng tương ứng ở đây.
-                  Đạt khi tổng lịch trong kỳ lớn hơn hoặc bằng ngưỡng đã nhập.
+                  Mọi chỉ tiêu trong bảng: đạt khi tổng hoặc tỷ lệ trong kỳ lớn hơn hoặc bằng ngưỡng đã nhập (kể cả bằng ngưỡng).
+                  So khớp với các cột tương ứng trên báo cáo KPI tuần / KPI tháng.
                 </p>
                 <button
                   type="button"
@@ -416,7 +416,8 @@ export function KpiConfigPage({ data, selectedBranchId }) {
                   </table>
                 </div>
                 <p className="muted small" style={{ marginTop: 8, marginBottom: 0 }}>
-                  KPI tháng — lịch đặt gội: so sánh tổng cột «Lịch đặt gội» trong báo cáo KPI tháng với 4 × (ngưỡng KPI tuần ở trên). KPI tuần so với cùng cột trong KPI tuần.
+                  Mọi chỉ tiêu: đạt khi thực tế trong kỳ lớn hơn hoặc bằng ngưỡng đã nhập.
+                  KPI tháng — lịch đặt gội: so với 4 × (ngưỡng KPI tuần); KPI tuần — lịch đặt gội: so với ngưỡng KPI tuần (cùng cột «Lịch đặt gội» trên báo cáo).
                 </p>
                 <button
                   type="button"
