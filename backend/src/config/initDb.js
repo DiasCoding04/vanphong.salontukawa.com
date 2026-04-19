@@ -1,4 +1,4 @@
-const { run, get } = require("./db");
+const { run, get, all } = require("./db");
 
 const defaultKpiConfig = {
   weeklyStartDay: 1,
@@ -22,7 +22,10 @@ const defaultKpiConfig = {
     monthlyProducts: 0
   },
   rewards: { allPassBonus: 500000, passRate80Bonus: 200000 },
-  penalties: { failKpiPenalty: 200000 }
+  penalties: { failKpiPenalty: 200000 },
+  chemicalMinVnd: 450000,
+  washDoubleCountFromVnd: 350000,
+  monthlyHoldRate: 0.15
 };
 
 async function initDb() {
@@ -131,12 +134,51 @@ async function initDb() {
 
   await run(`CREATE TABLE IF NOT EXISTS staff_kpi_settings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    staff_id INTEGER NOT NULL UNIQUE,
+    staff_id INTEGER NOT NULL,
     start_date TEXT NOT NULL,
     end_date TEXT,
     config_json TEXT NOT NULL,
+    UNIQUE(staff_id, start_date),
     FOREIGN KEY(staff_id) REFERENCES staff(id)
   )`);
+
+  // Migration: Kiểm tra xem bảng có đang dùng UNIQUE cũ (chỉ staff_id) không
+  const indices = await all(`PRAGMA index_list('staff_kpi_settings')`);
+  let needsMigration = false;
+  for (const idx of indices) {
+    if (idx.unique === 1) {
+      const info = await all(`PRAGMA index_info('${idx.name}')`);
+      // Nếu chỉ có 1 cột và cột đó là staff_id => Cần migrate
+      if (info.length === 1 && info[0].name === 'staff_id') {
+        needsMigration = true;
+        break;
+      }
+    }
+  }
+
+  if (needsMigration) {
+    console.log("Migrating staff_kpi_settings to support multiple dates...");
+    await run("BEGIN TRANSACTION");
+    try {
+      await run("ALTER TABLE staff_kpi_settings RENAME TO staff_kpi_settings_old");
+      await run(`CREATE TABLE staff_kpi_settings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        staff_id INTEGER NOT NULL,
+        start_date TEXT NOT NULL,
+        end_date TEXT,
+        config_json TEXT NOT NULL,
+        UNIQUE(staff_id, start_date),
+        FOREIGN KEY(staff_id) REFERENCES staff(id)
+      )`);
+      await run(`INSERT INTO staff_kpi_settings (id, staff_id, start_date, end_date, config_json)
+                 SELECT id, staff_id, start_date, end_date, config_json FROM staff_kpi_settings_old`);
+      await run("DROP TABLE staff_kpi_settings_old");
+      await run("COMMIT");
+    } catch (err) {
+      await run("ROLLBACK");
+      console.error("Migration failed:", err);
+    }
+  }
 
   await run(`CREATE TABLE IF NOT EXISTS staff_personal_info (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

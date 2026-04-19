@@ -203,12 +203,10 @@ export function StaffPage({ data, selectedBranchId }) {
               <input type="number" min={0} value={form.baseSalary} onChange={(e) => setField("baseSalary", e.target.value)} />
             </label>
           ) : (
-            <div className="field">
+            <label className="field">
               <span className="muted">{"L\u01b0\u01a1ng c\u1ee9ng"}</span>
-              <p className="muted" style={{ margin: "8px 0 0", fontSize: 13 }}>
-                Thợ chính không nhập lương cứng; hệ thống lưu 0 VND.
-              </p>
-            </div>
+              <input type="text" value="0" disabled readOnly />
+            </label>
           )}
 
           <label className="field">

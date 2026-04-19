@@ -10,18 +10,14 @@ function mergeStaffKpiCfg(person, kpiConfig, staffKpiConfigMap) {
 }
 
 /**
- * Khớp bảng Cài đặt KPI: cột «KPI tháng» — lịch đặt hóa chất, check-in, doanh thu tháng, sản phẩm;
- * thợ phụ thêm lịch đặt gội (ngưỡng tháng = 4× lịch đặt gội tuần, chỉ bật khi ngưỡng tuần > 0).
+ * Khớp bảng Cài đặt KPI: cột «KPI tháng» — chỉ doanh thu tháng và sản phẩm.
+ * Lịch đặt hóa chất, check-in, lịch đặt gội chỉ dùng cho KPI tuần.
  */
-function checksActiveMonth(cfg, type) {
-  const isAsst = type === "assistant";
+function checksActiveMonth(cfg) {
   const monthlyRev = Number(cfg.monthlyRevenue);
   return {
-    bookings: (cfg.monthlyBookings ?? 0) > 0,
-    checkin: (cfg.monthlyCheckinRate ?? 0) > 0,
     revenue: Number.isFinite(monthlyRev) && monthlyRev > 0,
-    products: (cfg.monthlyProducts ?? 0) > 0,
-    wash: isAsst && (cfg.weeklyWash ?? 0) > 0
+    products: (cfg.monthlyProducts ?? 0) > 0
   };
 }
 
@@ -60,23 +56,14 @@ function calculateKpiByStaff(staff, attendanceRows, kpiConfig, staffKpiConfigMap
     const cfg = mergeStaffKpiCfg(person, kpiConfig, staffKpiConfigMap);
     const monthlyRevTarget = Number(cfg.monthlyRevenue);
     const monthlyRevOk = Number.isFinite(monthlyRevTarget) ? monthlyRevTarget : 0;
-    const targetBookingsMonth = Number(cfg.monthlyBookings ?? 0);
-    const targetCheckinMonth = Number(cfg.monthlyCheckinRate ?? 0);
     const targetProductsMonth = Number(cfg.monthlyProducts ?? 0);
-    const targetWashMonth = Number(cfg.weeklyWash ?? 0) * 4;
-    /** Mọi chỉ tiêu KPI tháng: đạt khi thực tế >= ngưỡng trong cài đặt (kể cả bằng ngưỡng). */
+    /** KPI tháng: chỉ doanh thu và sản phẩm (đạt khi thực tế >= ngưỡng). */
     const checks = {
-      bookings: totalBookings >= targetBookingsMonth,
-      checkin: checkinRate >= targetCheckinMonth,
       revenue: totalRevenue >= monthlyRevOk,
       products: totalProducts >= targetProductsMonth
     };
 
-    if (person.type === "assistant") {
-      checks.wash = totalWash >= targetWashMonth;
-    }
-
-    const checksActive = checksActiveMonth(cfg, person.type);
+    const checksActive = checksActiveMonth(cfg);
     const allPass = Object.values(checks).every(Boolean);
     const presentDays = rows.length;
     return {
@@ -152,7 +139,7 @@ function calculateKpiWeekByStaff(staff, attendanceRows, kpiConfig, staffKpiConfi
   });
 }
 
-function calculateSalaryReport(staff, attendanceRows, kpiRows, adjustments, kpiConfig, holdHistoryMap = new Map()) {
+function calculateSalaryReport(staff, attendanceRows, kpiRows, adjustments, kpiConfig, holdHistoryMap = new Map(), month = "") {
   const attendanceMap = new Map();
   for (const row of attendanceRows) {
     if (!attendanceMap.has(row.staff_id)) attendanceMap.set(row.staff_id, []);
@@ -161,10 +148,17 @@ function calculateSalaryReport(staff, attendanceRows, kpiRows, adjustments, kpiC
 
   const kpiMap = new Map(kpiRows.map((item) => [item.id, item]));
 
+  // Tính số ngày trong tháng (mặc định 30 nếu không có month)
+  let daysInMonth = 30;
+  if (month && month.includes("-")) {
+    const [y, m] = month.split("-").map(Number);
+    daysInMonth = new Date(y, m, 0).getDate();
+  }
+
   return staff.map((person) => {
     const rows = attendanceMap.get(person.id) || [];
     const workDays = rows.filter((r) => r.present === 1).length;
-    const base = Math.round((person.base_salary / 30) * workDays);
+    const base = Math.round((person.base_salary / daysInMonth) * workDays);
     const kpiResult = kpiMap.get(person.id);
     const failPenalty = kpiResult?.allPass ? 0 : kpiConfig.penalties.failKpiPenalty;
 
@@ -175,7 +169,8 @@ function calculateSalaryReport(staff, attendanceRows, kpiRows, adjustments, kpiC
     const penalties = myAdjustments.filter((a) => a.type === "penalty").reduce((s, v) => s + v.amount, 0);
 
     const salaryBeforeHold = base + commission + booking8 + kpiBonus - failPenalty - penalties;
-    const monthlyHoldCap = Math.max(0, Math.round(salaryBeforeHold * 0.15));
+    const holdRate = kpiConfig.monthlyHoldRate ?? 0.15;
+    const monthlyHoldCap = Math.max(0, Math.round(salaryBeforeHold * holdRate));
     const holdState = holdHistoryMap.get(person.id) || { deductedBefore: 0, deductedCurrent: null };
     const holdRemainingBefore = Math.max(0, (person.hold_remaining || 0) - holdState.deductedBefore);
     const suggestedHoldDeduction = Math.min(holdRemainingBefore, monthlyHoldCap);

@@ -16,7 +16,7 @@ export function DashboardPage({ data }) {
           <h3>{"T\u1ed5ng quan h\u1ec7 th\u1ed1ng"}</h3>
           <span className="muted">{data.loading ? "\u0110ang t\u1ea3i..." : "\u0110\u00e3 \u0111\u1ed3ng b\u1ed9 d\u1eef li\u1ec7u"}</span>
         </div>
-        <p className="muted">{data.error || "D\u1eef li\u1ec7u KPI v\u00e0 l\u01b0\u01a1ng \u0111\u01b0\u1ee3c t\u00ednh tr\u1ef1c ti\u1ebfp t\u1eeb backend \u0111\u1ec3 \u0111\u1ea3m b\u1ea3o nh\u1ea5t qu\u00e1n."}</p>
+        {data.error ? <p className="muted">{data.error}</p> : null}
       </div>
     </>
   );

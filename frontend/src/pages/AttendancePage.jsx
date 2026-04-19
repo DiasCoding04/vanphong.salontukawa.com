@@ -4,22 +4,6 @@ import { addIsoDays, vietnamTodayIsoDate } from "../utils/vietnamTime";
 import { formatCheckinRatePct } from "../utils/format";
 import { YesterdayReportPanel } from "./YesterdayReportPage";
 
-const CHEMICAL_MIN_VND = 450000;
-/** Mỗi dòng gội có doanh thu từ mức này trở lên được tính 2 lịch (đồng bộ backend). */
-const WASH_DOUBLE_COUNT_FROM_VND = 350000;
-
-function washLineCountFromRevenue(revenue) {
-  if (!Number.isFinite(revenue) || revenue <= 0) return 0;
-  return revenue >= WASH_DOUBLE_COUNT_FROM_VND ? 2 : 1;
-}
-
-function totalWashBookingCount(lines) {
-  return lines.reduce((sum, line) => {
-    const n = Math.round(Number(String(line.revenue).replace(/\s/g, "")));
-    return sum + washLineCountFromRevenue(n);
-  }, 0);
-}
-
 function formatVnd(n) {
   if (!Number.isFinite(n)) return "—";
   return `${n.toLocaleString("vi-VN")} đ`;
@@ -55,7 +39,8 @@ function chemicalWashPayloadFromRow(row, staffType) {
   const chem = parseStoredBookings(row?.chemical_bookings_json).map((b) => ({
     revenue: Math.round(Number(b.revenue))
   }));
-  const washRaw = staffType === "assistant" ? parseStoredBookings(row?.wash_bookings_json) : [];
+  const washRaw =
+    staffType === "assistant" || staffType === "main" ? parseStoredBookings(row?.wash_bookings_json) : [];
   const wash = washRaw.map((b) => ({ revenue: Math.round(Number(b.revenue)) }));
   return { chemicalBookings: chem, washBookings: wash };
 }
@@ -75,6 +60,22 @@ export function AttendancePage({ data, selectedBranchId }) {
   const [rowsKpi, setRowsKpi] = useState([]);
   const [rowsStatus, setRowsStatus] = useState([]);
   const [modal, setModal] = useState(null);
+  const [kpiConfig, setKpiConfig] = useState(null);
+
+  const chemicalMinVnd = kpiConfig?.chemicalMinVnd || 450000;
+  const washDoubleCountFromVnd = kpiConfig?.washDoubleCountFromVnd || 350000;
+
+  function washLineCountFromRevenue(revenue) {
+    if (!Number.isFinite(revenue) || revenue <= 0) return 0;
+    return revenue >= washDoubleCountFromVnd ? 2 : 1;
+  }
+
+  function totalWashBookingCount(lines) {
+    return lines.reduce((sum, line) => {
+      const n = Math.round(Number(String(line.revenue).replace(/\s/g, "")));
+      return sum + washLineCountFromRevenue(n);
+    }, 0);
+  }
 
   const staffRowsKpi = useMemo(() => {
     if (selectedBranchId == null || selectedBranchId === "") return [];
@@ -122,6 +123,13 @@ export function AttendancePage({ data, selectedBranchId }) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      try {
+        const cfg = await api.getKpiConfig();
+        if (!cancelled) setKpiConfig(cfg);
+      } catch (err) {
+        console.error("Failed to load KPI config", err);
+      }
+
       if (!selectedBranchId) {
         setRowsKpi([]);
         setRowsStatus([]);
@@ -176,18 +184,23 @@ export function AttendancePage({ data, selectedBranchId }) {
           ? Array.from({ length: row.bookings }, () => ({ id: nid++, revenue: "" }))
           : [];
 
-    const washParsed = staff.type === "assistant" ? parseStoredBookings(row?.wash_bookings_json) : [];
+    const washParsed = parseStoredBookings(row?.wash_bookings_json);
     const washLines =
-      staff.type !== "assistant"
-        ? []
-        : washParsed.length > 0
+      staff.type === "assistant"
+        ? washParsed.length > 0
           ? washParsed.map((b) => ({
               id: nid++,
               revenue: Number.isFinite(b.revenue) ? String(b.revenue) : ""
             }))
           : row && row.wash > 0
             ? Array.from({ length: row.wash }, () => ({ id: nid++, revenue: "" }))
-            : [];
+            : []
+        : washParsed.length > 0
+          ? washParsed.map((b) => ({
+              id: nid++,
+              revenue: Number.isFinite(b.revenue) ? String(b.revenue) : ""
+            }))
+          : [];
 
     setModal({
       kind: "kpi",
@@ -242,22 +255,22 @@ export function AttendancePage({ data, selectedBranchId }) {
     }));
 
     for (const b of chemicalPayload) {
-      if (!Number.isFinite(b.revenue) || b.revenue < CHEMICAL_MIN_VND) {
+      if (!Number.isFinite(b.revenue) || b.revenue < chemicalMinVnd) {
         alert(
-          "Mỗi lịch đặt hóa chất phải có doanh thu từ 450.000 VND trở lên (≥ 450.000 VND). Hãy xóa dòng trống hoặc điền đủ từng lịch."
+          `Mỗi lịch đặt hóa chất phải có doanh thu từ ${chemicalMinVnd.toLocaleString("vi-VN")} VND trở lên. Hãy xóa dòng trống hoặc điền đủ từng lịch.`
         );
         return;
       }
     }
 
     const washPayload =
-      modal.staffType !== "assistant"
-        ? []
-        : modal.washLines.map((line) => ({
+      modal.staffType === "assistant" || modal.staffType === "main"
+        ? modal.washLines.map((line) => ({
             revenue: Math.round(Number(String(line.revenue).replace(/\s/g, "")))
-          }));
+          }))
+        : [];
 
-    if (modal.staffType === "assistant") {
+    if (modal.staffType === "assistant" || modal.staffType === "main") {
       for (const b of washPayload) {
         if (!Number.isFinite(b.revenue) || b.revenue <= 0) {
           alert(
@@ -386,13 +399,6 @@ export function AttendancePage({ data, selectedBranchId }) {
             </button>
           </div>
         ) : null}
-        <p className="muted small" style={{ marginTop: 10, marginBottom: 0 }}>
-          {tab === "kpi"
-            ? "Ch\u1ec9 s\u1ed1 kh\u00e1ch, check-in, l\u1ecbch, doanh thu\u2026 theo ng\u00e0y \u0111\u00e3 ch\u1ecdn (m\u1eb7c \u0111\u1ecbnh h\u00f4m qua)."
-            : tab === "status"
-              ? "Ch\u1ec9 ghi nh\u1eadn c\u00f3 m\u1eb7t / \u0111i mu\u1ed9n / v\u1eafng cho ng\u00e0y \u0111\u00e3 ch\u1ecdn (m\u1eb7c \u0111\u1ecbnh h\u00f4m nay). KPI nh\u1eadp \u1edf tab Ch\u1ea5m KPI."
-              : "B\u00e1o c\u00e1o c\u00f4ng vi\u1ec7c v\u00e0 video theo ng\u00e0y \u0111\u00e3 ch\u1ecdn. Ph\u1ea1t (n\u1ebfu c\u00f3) v\u00e0o ph\u1ea1t ph\u00e1t sinh th\u00e1ng t\u01b0\u01a1ng \u1ee9ng."}
-        </p>
       </div>
 
       {tab === "kpi" && (
@@ -604,10 +610,8 @@ export function AttendancePage({ data, selectedBranchId }) {
               {"Ng\u00e0y: "}
               {modal.date}
               {" · "}
-              {"T\u1ed5ng doanh thu t\u1eeb c\u00e1c l\u1ecbch: "}
+              {"T\u1ed5ng doanh thu: "}
               <strong>{formatVnd(modalBookingTotal)}</strong>
-              {" · "}
-              {"Tr\u1ea1ng th\u00e1i \u0111i l\u00e0m (ng\u00e0y ch\u1ea5m c\u00f4ng): tab Ch\u1ea5m c\u00f4ng."}
             </p>
 
             <div className="attendance-modal-row3">
@@ -640,136 +644,120 @@ export function AttendancePage({ data, selectedBranchId }) {
               </div>
             </div>
 
-            <div
-              className={
-                modal.staffType === "assistant"
-                  ? "attendance-modal-bookings attendance-modal-bookings--split"
-                  : "attendance-modal-bookings"
-              }
-            >
+            <div className="attendance-modal-bookings attendance-modal-bookings--split">
               <div className="attendance-modal-section">
-                    <div className="attendance-modal-section-head">
-                      <h4>{"L\u1ecbch \u0111\u1eb7t h\u00f3a ch\u1ea5t"}</h4>
-                      <span className="muted">
-                        {"S\u1ed1 l\u1ecbch: "}
-                        {modal.chemicalLines.length}
-                        {" · m\u1ed7i l\u1ecbch \u2265 450.000 \u0111"}
-                      </span>
-                    </div>
-                    <p className="muted small">{"M\u1ed7i d\u00f2ng l\u00e0 m\u1ed9t l\u1ecbch v\u1edbi doanh thu ri\u00eang c\u1ee7a l\u1ecbch \u0111\u00f3."}</p>
-                    <ul className="attendance-modal-lines">
-                      {modal.chemicalLines.map((line, idx) => (
-                        <li key={line.id}>
-                          <span className="attendance-line-idx">{idx + 1}</span>
-                          <input
-                            type="number"
-                            min={CHEMICAL_MIN_VND}
-                            placeholder="Doanh thu lịch (VND)"
-                            value={line.revenue}
-                            onChange={(e) => {
-                              const v = e.target.value;
-                              setModal({
-                                ...modal,
-                                chemicalLines: modal.chemicalLines.map((l) =>
-                                  l.id === line.id ? { ...l, revenue: v } : l
-                                )
-                              });
-                            }}
-                          />
-                          <button
-                            type="button"
-                            className="icon-btn danger"
-                            onClick={() =>
-                              setModal({
-                                ...modal,
-                                chemicalLines: modal.chemicalLines.filter((l) => l.id !== line.id)
-                              })
-                            }
-                          >
-                            {"X\u00f3a"}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                    <button
-                      type="button"
-                      className="secondary"
-                      onClick={() =>
-                        setModal({
-                          ...modal,
-                          chemicalLines: [...modal.chemicalLines, { id: Date.now(), revenue: "" }]
-                        })
-                      }
-                    >
-                      {"+ Th\u00eam l\u1ecbch h\u00f3a ch\u1ea5t"}
-                    </button>
-                  </div>
-
-                  {modal.staffType === "assistant" ? (
-                    <div className="attendance-modal-section">
-                      <div className="attendance-modal-section-head">
-                        <h4>{"L\u1ecbch \u0111\u1eb7t g\u1ed9i"}</h4>
-                        <span className="muted">
-                          {"S\u1ed1 d\u00f2ng: "}
-                          {modal.washLines.length}
-                          {" · t\u1ed5ng l\u1ecbch t\u00ednh: "}
-                          {totalWashBookingCount(modal.washLines)}
-                          {" (\u2265 350.000 \u0111/d\u00f2ng = 2 l\u1ecbch)"}
-                        </span>
-                      </div>
-                      <p className="muted small">
-                        {
-                          "M\u1ed7i d\u00f2ng m\u1ed9t l\u1ecbch g\u1ed9i; doanh thu > 0. T\u1eeb 350.000 \u0111 tr\u1edf l\u00ean tr\u00ean m\u1ed9t d\u00f2ng \u0111\u01b0\u1ee3c t\u00ednh 2 l\u1ecbch."
-                        }
-                      </p>
-                      <ul className="attendance-modal-lines">
-                        {modal.washLines.map((line, idx) => (
-                          <li key={line.id}>
-                            <span className="attendance-line-idx">{idx + 1}</span>
-                            <input
-                              type="number"
-                              min={1}
-                              placeholder="Doanh thu lịch (VND)"
-                              value={line.revenue}
-                              onChange={(e) => {
-                                const v = e.target.value;
-                                setModal({
-                                  ...modal,
-                                  washLines: modal.washLines.map((l) =>
-                                    l.id === line.id ? { ...l, revenue: v } : l
-                                  )
-                                });
-                              }}
-                            />
-                            <button
-                              type="button"
-                              className="icon-btn danger"
-                              onClick={() =>
-                                setModal({
-                                  ...modal,
-                                  washLines: modal.washLines.filter((l) => l.id !== line.id)
-                                })
-                              }
-                            >
-                              {"X\u00f3a"}
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
+                <div className="attendance-modal-section-head">
+                  <h4>{"L\u1ecbch \u0111\u1eb7t h\u00f3a ch\u1ea5t"}</h4>
+                  <span className="muted">
+                    {"S\u1ed1 l\u1ecbch: "}
+                    {modal.chemicalLines.length}
+                  </span>
+                </div>
+                <ul className="attendance-modal-lines">
+                  {modal.chemicalLines.map((line, idx) => (
+                    <li key={line.id}>
+                      <span className="attendance-line-idx">{idx + 1}</span>
+                      <input
+                        type="number"
+                        min={CHEMICAL_MIN_VND}
+                        placeholder="Doanh thu lịch (VND)"
+                        value={line.revenue}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setModal({
+                            ...modal,
+                            chemicalLines: modal.chemicalLines.map((l) =>
+                              l.id === line.id ? { ...l, revenue: v } : l
+                            )
+                          });
+                        }}
+                      />
                       <button
                         type="button"
-                        className="secondary"
+                        className="icon-btn danger"
                         onClick={() =>
                           setModal({
                             ...modal,
-                            washLines: [...modal.washLines, { id: Date.now(), revenue: "" }]
+                            chemicalLines: modal.chemicalLines.filter((l) => l.id !== line.id)
                           })
                         }
                       >
-                        {"+ Th\u00eam l\u1ecbch g\u1ed9i"}
+                        {"X\u00f3a"}
                       </button>
-                    </div>
-                  ) : null}
+                    </li>
+                  ))}
+                </ul>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() =>
+                    setModal({
+                      ...modal,
+                      chemicalLines: [...modal.chemicalLines, { id: Date.now(), revenue: "" }]
+                    })
+                  }
+                >
+                  {"+ Th\u00eam l\u1ecbch h\u00f3a ch\u1ea5t"}
+                </button>
+              </div>
+
+              <div className="attendance-modal-section">
+                <div className="attendance-modal-section-head">
+                  <h4>{"L\u1ecbch \u0111\u1eb7t g\u1ed9i"}</h4>
+                  <span className="muted">
+                    {"S\u1ed1 d\u00f2ng: "}
+                    {modal.washLines.length}
+                    {" · l\u1ecbch t\u00ednh: "}
+                    {totalWashBookingCount(modal.washLines)}
+                  </span>
+                </div>
+                <ul className="attendance-modal-lines">
+                  {modal.washLines.map((line, idx) => (
+                    <li key={line.id}>
+                      <span className="attendance-line-idx">{idx + 1}</span>
+                      <input
+                        type="number"
+                        min={1}
+                        placeholder="Doanh thu lịch (VND)"
+                        value={line.revenue}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setModal({
+                            ...modal,
+                            washLines: modal.washLines.map((l) =>
+                              l.id === line.id ? { ...l, revenue: v } : l
+                            )
+                          });
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="icon-btn danger"
+                        onClick={() =>
+                          setModal({
+                            ...modal,
+                            washLines: modal.washLines.filter((l) => l.id !== line.id)
+                          })
+                        }
+                      >
+                        {"X\u00f3a"}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() =>
+                    setModal({
+                      ...modal,
+                      washLines: [...modal.washLines, { id: Date.now(), revenue: "" }]
+                    })
+                  }
+                >
+                  {"+ Th\u00eam l\u1ecbch g\u1ed9i"}
+                </button>
+              </div>
             </div>
 
             <div className="attendance-modal-actions">
@@ -803,7 +791,6 @@ export function AttendancePage({ data, selectedBranchId }) {
             <p className="muted attendance-modal-sub">
               {"Ng\u00e0y: "}
               {modal.date}
-              {" · KPI (l\u1ecbch, doanh thu\u2026) nh\u1eadp \u1edf tab Ch\u1ea5m KPI."}
             </p>
 
             <div className="attendance-modal-field">

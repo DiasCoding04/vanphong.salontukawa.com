@@ -308,12 +308,7 @@ export function PersonalInfoPage({ data, selectedBranchId }) {
     <>
       <div className="card">
         <div className="page-header">
-          <div>
-            <h3>Thông tin cá nhân</h3>
-            <p className="muted" style={{ margin: "6px 0 0" }}>
-              Ngày tháng và sinh nhật dựa trên múi giờ Việt Nam (Hồ Chí Minh).
-            </p>
-          </div>
+          <h3>Thông tin cá nhân</h3>
         </div>
         {form.staffId && birthdayTomorrowStaffIds.has(Number(form.staffId)) && (
           <p className="birthday-soon-form-banner">
@@ -324,7 +319,7 @@ export function PersonalInfoPage({ data, selectedBranchId }) {
           <label className="field">
             <span className="muted">Nhân viên *</span>
             <select value={form.staffId} onChange={(e) => handlePickStaff(e.target.value)}>
-              <option value="">Chọn nhân viên đã tạo ở mục Nhân sự</option>
+              <option value="">— Chọn nhân viên —</option>
               {branchStaff.map((s) => (
                 <option key={s.id} value={s.id}>
                   {birthdayTomorrowStaffIds.has(Number(s.id)) ? "🎂 " : ""}

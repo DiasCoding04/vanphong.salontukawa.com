@@ -21,8 +21,8 @@ function isoToViDate(iso) {
 }
 
 /**
- * Nền ô theo KPI. Backend trả checks / checksActive khớp «Cài đặt KPI» (lịch đặt hóa chất, check-in;
- * thợ phụ: lịch đặt gội; tuần: không tô doanh thu/sản phẩm; tháng: đủ chỉ tiêu có ngưỡng).
+ * Nền ô theo KPI. Backend trả checks / checksActive: tuần — lịch HC, check-in, (thợ phụ) gội;
+ * tháng — chỉ doanh thu và sản phẩm (không tô % check-in / lịch HC).
  */
 function kpiCellBgClass(kpiReady, checks, checksActive, key) {
   if (!kpiReady) return undefined;
@@ -39,10 +39,12 @@ function AttendanceStyleTotalsTable({
   staffRows,
   periodLabel,
   kpiReady,
-  kpiRowById
+  kpiRowById,
+  /** "week": cột lịch đặt gội cho thợ phụ; "month": không có cột này (KPI tháng không tính gội). */
+  period
 }) {
   const emptyMsg = isAssistant ? "Không có thợ phụ trong chi nhánh." : "Không có thợ chính trong chi nhánh.";
-  const showWashColumn = isAssistant;
+  const showWashColumn = isAssistant && period === "week";
   /* 8 cột thợ chính (+1 cột gội nếu thợ phụ) — khớp colgroup/colspan, tránh ô trống bên phải */
   const colCount = showWashColumn ? 9 : 8;
 
@@ -188,10 +190,7 @@ export function KpiWeekAttendanceReport({ data, selectedBranchId }) {
     <>
       <div className="card kpi-period-card" style={{ marginBottom: 16 }}>
         <div className="row" style={{ alignItems: "center", flexWrap: "wrap", gap: 12 }}>
-          <span className="muted">Tuần đang xem</span>
-          <strong>
-            {rangeLabel}
-          </strong>
+          <strong>{rangeLabel}</strong>
           <button type="button" className="secondary" onClick={() => setWeekMonday((w) => addIsoDays(w, -7))}>
             Tuần trước
           </button>
@@ -203,9 +202,6 @@ export function KpiWeekAttendanceReport({ data, selectedBranchId }) {
             Tuần này
           </button>
         </div>
-        <p className="muted small" style={{ marginTop: 10, marginBottom: 0 }}>
-          Bảng bên dưới là tổng chỉ số của cả tuần Thứ Hai–Chủ nhật đó (kể cả khi tuần cắt qua hai tháng). KPI tuần và KPI tháng là hai báo cáo độc lập.
-        </p>
       </div>
       <AttendanceStyleTotalsTable
         sectionTitle="Thợ chính"
@@ -214,6 +210,7 @@ export function KpiWeekAttendanceReport({ data, selectedBranchId }) {
         periodLabel={periodLabel}
         kpiReady={kpiReady}
         kpiRowById={kpiRowById}
+        period="week"
       />
       <AttendanceStyleTotalsTable
         sectionTitle="Thợ phụ"
@@ -222,6 +219,7 @@ export function KpiWeekAttendanceReport({ data, selectedBranchId }) {
         periodLabel={null}
         kpiReady={kpiReady}
         kpiRowById={kpiRowById}
+        period="week"
       />
     </>
   );
@@ -272,8 +270,6 @@ export function KpiMonthAttendanceReport({ data, selectedBranchId }) {
       .sort((a, b) => a.name.localeCompare(b.name, "vi"));
   }, [data.staff, selectedBranchId, month]);
 
-  const periodLabel = `Th\u00e1ng ${month} — t\u1ed5ng \u0111\u00fang th\u00e1ng l\u1ecbch \u0111\u00f3 (kh\u00f4ng g\u1ed9p v\u1edbi tu\u1ea7n kh\u00e1c); doanh thu = t\u1ed5ng c\u00e1c ng\u00e0y \u0111\u00e3 ch\u1ea5m; c\u00e1c c\u1ed9t kh\u00e1c theo ng\u00e0y c\u00f3 m\u1eb7t.`;
-
   const staffRowsMain = useMemo(
     () => staffRows.filter((s) => s.type === "main"),
     [staffRows]
@@ -292,9 +288,10 @@ export function KpiMonthAttendanceReport({ data, selectedBranchId }) {
         sectionTitle="Thợ chính"
         isAssistant={false}
         staffRows={staffRowsMain}
-        periodLabel={periodLabel}
+        periodLabel={null}
         kpiReady={kpiReady}
         kpiRowById={kpiRowById}
+        period="month"
       />
       <AttendanceStyleTotalsTable
         sectionTitle="Thợ phụ"
@@ -303,6 +300,7 @@ export function KpiMonthAttendanceReport({ data, selectedBranchId }) {
         periodLabel={null}
         kpiReady={kpiReady}
         kpiRowById={kpiRowById}
+        period="month"
       />
     </>
   );

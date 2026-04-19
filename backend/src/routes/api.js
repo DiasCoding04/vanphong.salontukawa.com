@@ -311,7 +311,7 @@ router.put("/attendance", async (req, res, next) => {
 
     let absent = presenceStatus === "absent";
     const hasAnyChemicalBooking = chemicalBookings.length > 0;
-    const hasAnyWashBooking = staff.type === "assistant" && washBookings.length > 0;
+    const hasAnyWashBooking = washBookings.length > 0;
     if (absent && (hasAnyChemicalBooking || hasAnyWashBooking)) {
       absent = false;
     }
@@ -335,17 +335,25 @@ router.put("/attendance", async (req, res, next) => {
     const CHEMICAL_MIN_VND = 450000;
     /** Mỗi dòng gội có doanh thu từ mức này trở lên được tính 2 lịch (thay vì 1). */
     const WASH_DOUBLE_COUNT_FROM_VND = 350000;
+    const kpiConfig = JSON.parse((await get("SELECT config_json FROM kpi_config WHERE id = 1")).config_json);
+    const chemicalMinVnd = kpiConfig.chemicalMinVnd || 450000;
+    const washDoubleCountFromVnd = kpiConfig.washDoubleCountFromVnd || 350000;
+
     const chemical = chemicalBookings.map((b) => ({ revenue: Math.round(Number(b.revenue)) }));
-    const washLines = staff.type === "assistant" ? washBookings.map((b) => ({ revenue: Math.round(Number(b.revenue)) })) : [];
+    /** Thợ phụ: lịch gội tính vào cột wash (KPI gội). Thợ chính: chỉ cộng doanh thu, wash luôn 0. */
+    const washLines =
+      staff.type === "assistant" || staff.type === "main"
+        ? washBookings.map((b) => ({ revenue: Math.round(Number(b.revenue)) }))
+        : [];
 
     for (const b of chemical) {
-      if (!Number.isFinite(b.revenue) || b.revenue < CHEMICAL_MIN_VND) {
+      if (!Number.isFinite(b.revenue) || b.revenue < chemicalMinVnd) {
         return res.status(400).json({
-          message: "Mỗi lịch đặt hóa chất phải có doanh thu từ 450.000 VND trở lên (≥ 450.000 VND)"
+          message: `Mỗi lịch đặt hóa chất phải có doanh thu từ ${chemicalMinVnd.toLocaleString("vi-VN")} VND trở lên.`
         });
       }
     }
-    if (staff.type === "assistant") {
+    if (staff.type === "assistant" || staff.type === "main") {
       for (const b of washLines) {
         if (!Number.isFinite(b.revenue) || b.revenue <= 0) {
           return res.status(400).json({
@@ -358,7 +366,7 @@ router.put("/attendance", async (req, res, next) => {
     const bookings = chemical.length;
     const wash =
       staff.type === "assistant"
-        ? washLines.reduce((sum, b) => sum + (b.revenue >= WASH_DOUBLE_COUNT_FROM_VND ? 2 : 1), 0)
+        ? washLines.reduce((sum, b) => sum + (b.revenue >= washDoubleCountFromVnd ? 2 : 1), 0)
         : 0;
     const revenue = [...chemical, ...washLines].reduce((s, b) => s + b.revenue, 0);
     const chemicalJson = JSON.stringify(chemical);
@@ -396,7 +404,14 @@ router.put("/attendance", async (req, res, next) => {
       ]
     );
     const row = await get("SELECT * FROM attendance WHERE staff_id = ? AND date = ?", [staffId, date]);
-    await run("DELETE FROM salary_adjustments WHERE attendance_id = ?", [row.id]);
+    
+    // Chỉ xóa các khoản phạt đi muộn TỰ ĐỘNG (loại 'penalty' và có note chứa 'Đi muộn')
+    // Để tránh xóa nhầm các khoản phạt thủ công khác cùng ngày (nếu có sau này)
+    await run(
+      "DELETE FROM salary_adjustments WHERE attendance_id = ? AND type = 'penalty' AND note LIKE 'Đi muộn%'", 
+      [row.id]
+    );
+
     if (late && latePenalty > 0) {
       const month = date.slice(0, 7);
       const note = `Đi muộn ${formatViDateFromIso(date)}: ${lateMinutes} phút`;
@@ -479,9 +494,27 @@ router.delete("/manager-kpi-staff/:staffId", async (req, res, next) => {
 
 router.get("/staff-kpi-settings", async (req, res, next) => {
   try {
-    const { staffId } = req.query;
+    const { staffId, date } = req.query;
     if (!staffId) return res.status(400).json({ message: "staffId is required" });
-    const row = await get("SELECT * FROM staff_kpi_settings WHERE staff_id = ?", [staffId]);
+    
+    let row;
+    if (date) {
+      // Lấy cấu hình áp dụng cho ngày cụ thể
+      row = await get(
+        `SELECT * FROM staff_kpi_settings 
+         WHERE staff_id = ? AND start_date <= ? 
+         AND (end_date IS NULL OR end_date = '' OR end_date >= ?)
+         ORDER BY start_date DESC LIMIT 1`,
+        [staffId, date, date]
+      );
+    } else {
+      // Lấy cấu hình mới nhất
+      row = await get(
+        "SELECT * FROM staff_kpi_settings WHERE staff_id = ? ORDER BY start_date DESC LIMIT 1", 
+        [staffId]
+      );
+    }
+
     if (!row) return res.json(null);
     res.json({
       staffId: row.staff_id,
@@ -497,16 +530,25 @@ router.get("/staff-kpi-settings", async (req, res, next) => {
 router.put("/staff-kpi-settings", async (req, res, next) => {
   try {
     const { staffId, startDate, endDate, config } = req.body;
+    if (!staffId || !startDate || !config) {
+      return res.status(400).json({ message: "staffId, startDate, and config are required" });
+    }
+
     await run(
       `INSERT INTO staff_kpi_settings (staff_id, start_date, end_date, config_json)
        VALUES (?, ?, ?, ?)
-       ON CONFLICT(staff_id) DO UPDATE SET
-         start_date = excluded.start_date,
+       ON CONFLICT(staff_id, start_date) DO UPDATE SET
          end_date = excluded.end_date,
          config_json = excluded.config_json`,
       [staffId, startDate, endDate || null, JSON.stringify(config)]
     );
-    const row = await get("SELECT * FROM staff_kpi_settings WHERE staff_id = ?", [staffId]);
+    const row = await get(
+      "SELECT * FROM staff_kpi_settings WHERE staff_id = ? AND start_date = ?", 
+      [staffId, startDate]
+    );
+    if (!row) {
+      throw new Error("Không tìm thấy cấu hình vừa lưu");
+    }
     res.json({
       staffId: row.staff_id,
       startDate: row.start_date,
@@ -514,6 +556,7 @@ router.put("/staff-kpi-settings", async (req, res, next) => {
       config: JSON.parse(row.config_json)
     });
   } catch (error) {
+    console.error("Lỗi khi lưu cài đặt KPI:", error);
     next(error);
   }
 });
@@ -814,7 +857,7 @@ router.get("/reports/salary", async (req, res, next) => {
     const staffKpiMap = await getStaffKpiMap(month, staffRows);
     const kpiRows = calculateKpiByStaff(staffRows, attendanceRows, kpiConfig, staffKpiMap);
     const holdHistoryMap = await getHoldHistoryMap(month, staffRows);
-    const salaries = calculateSalaryReport(staffRows, attendanceRows, kpiRows, adjustments, kpiConfig, holdHistoryMap);
+    const salaries = calculateSalaryReport(staffRows, attendanceRows, kpiRows, adjustments, kpiConfig, holdHistoryMap, month);
     res.json(salaries);
   } catch (error) {
     next(error);
@@ -854,7 +897,7 @@ router.post("/hold-deductions/apply-month", async (req, res, next) => {
     const staffKpiMap = await getStaffKpiMap(month, staffRows);
     const holdHistoryMap = await getHoldHistoryMap(month, staffRows);
     const kpiRows = calculateKpiByStaff(staffRows, attendanceRows, kpiConfig, staffKpiMap);
-    const salaries = calculateSalaryReport(staffRows, attendanceRows, kpiRows, adjustments, kpiConfig, holdHistoryMap);
+    const salaries = calculateSalaryReport(staffRows, attendanceRows, kpiRows, adjustments, kpiConfig, holdHistoryMap, month);
 
     for (const row of salaries) {
       await run(

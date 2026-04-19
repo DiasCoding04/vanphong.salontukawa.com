@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useData } from "./hooks/useData";
 import { api } from "./api/client";
 import { DashboardPage } from "./pages/DashboardPage";
@@ -8,13 +8,13 @@ import { AttendancePage } from "./pages/AttendancePage";
 import { KpiResultsPage } from "./pages/KpiResultsPage";
 import { SalaryPage } from "./pages/SalaryPage";
 const tabs = [
-  { key: "dashboard", label: "Tổng quan" },
-  { key: "branches", label: "Lọc chi nhánh" },
-  { key: "staff", label: "Nhân sự" },
-  { key: "personal-info", label: "Thông tin cá nhân" },
-  { key: "attendance", label: "Chấm công" },
-  { key: "kpi", label: "Kết quả KPI" },
-  { key: "salary", label: "Lương tháng" }
+  { key: "dashboard", label: "Tổng quan", icon: "📊" },
+  { key: "branches", label: "Lọc chi nhánh", icon: "🏢" },
+  { key: "staff", label: "Nhân sự", icon: "👥" },
+  { key: "personal-info", label: "Thông tin cá nhân", icon: "👤" },
+  { key: "attendance", label: "Chấm công", icon: "📅" },
+  { key: "kpi", label: "Kết quả KPI", icon: "📈" },
+  { key: "salary", label: "Lương tháng", icon: "💰" }
 ];
 const sidebarTabs = tabs.filter((tab) => tab.key !== "personal-info");
 const staffTopTabs = tabs.filter((tab) => tab.key === "staff" || tab.key === "personal-info");
@@ -31,14 +31,23 @@ function App() {
   const [kpiSubTab, setKpiSubTab] = useState("month");
   const [selectedBranchId, setSelectedBranchId] = useState(null);
   const [newBranchName, setNewBranchName] = useState("");
+  const [theme, setTheme] = useState(() => localStorage.getItem("theme") || "dark");
   const data = useData();
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("theme", theme);
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme((prev) => (prev === "dark" ? "light" : "dark"));
+  };
 
   const body = useMemo(() => {
     if (!selectedBranchId && activeTab !== "branches" && activeTab !== "dashboard") {
       return (
         <div className="card">
           <h3>Vui lòng chọn chi nhánh</h3>
-          <p className="muted">Hãy chọn 1 chi nhánh ở cột bên trái trước khi thao tác.</p>
         </div>
       );
     }
@@ -115,6 +124,7 @@ function App() {
               className={activeTab === tab.key ? "menu-item active" : "menu-item"}
               onClick={() => setActiveTab(tab.key)}
             >
+              <span className="menu-icon">{tab.icon}</span>
               {tab.label}
             </button>
           ))}
@@ -122,35 +132,41 @@ function App() {
       </aside>
       <main className="main">
         <header className="topbar">
-          {activeTab === "staff" || activeTab === "personal-info" ? (
-            <div className="top-tabs">
-              {staffTopTabs.map((tab) => (
-                <button
-                  key={tab.key}
-                  className={activeTab === tab.key ? "top-tab active" : "top-tab"}
-                  onClick={() => setActiveTab(tab.key)}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-          ) : activeTab === "kpi" ? (
-            <div className="top-tabs">
-              {kpiTopTabs.map((tab) => (
-                <button
-                  key={tab.key}
-                  type="button"
-                  className={kpiSubTab === tab.key ? "top-tab active" : "top-tab"}
-                  onClick={() => setKpiSubTab(tab.key)}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-          ) : (
-            <h2>{tabs.find((x) => x.key === activeTab)?.label}</h2>
-          )}
-          <span className="muted">Node.js + SQLite · Giờ VN (Asia/Ho_Chi_Minh)</span>
+          <div className="topbar-left">
+            {activeTab === "staff" || activeTab === "personal-info" ? (
+              <div className="top-tabs">
+                {staffTopTabs.map((tab) => (
+                  <button
+                    key={tab.key}
+                    className={activeTab === tab.key ? "top-tab active" : "top-tab"}
+                    onClick={() => setActiveTab(tab.key)}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+            ) : activeTab === "kpi" ? (
+              <div className="top-tabs">
+                {kpiTopTabs.map((tab) => (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    className={kpiSubTab === tab.key ? "top-tab active" : "top-tab"}
+                    onClick={() => setKpiSubTab(tab.key)}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <h2>{tabs.find((x) => x.key === activeTab)?.label}</h2>
+            )}
+          </div>
+          <div className="topbar-right">
+            <button className="theme-toggle" onClick={toggleTheme} title="Chuyển chế độ sáng/tối">
+              {theme === "dark" ? "☀️" : "🌙"}
+            </button>
+          </div>
         </header>
         <section className="content">{body}</section>
       </main>

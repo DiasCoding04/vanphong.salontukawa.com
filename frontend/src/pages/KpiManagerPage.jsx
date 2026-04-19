@@ -128,7 +128,7 @@ export function KpiManagerPage({ data, selectedBranchId }) {
   if (!selectedBranchId) {
     return (
       <div className="card">
-        <p className="muted">Vui lòng chọn chi nhánh ở mục Lọc chi nhánh trước.</p>
+        <p className="muted">Chọn chi nhánh trước.</p>
       </div>
     );
   }
@@ -144,9 +144,6 @@ export function KpiManagerPage({ data, selectedBranchId }) {
             Chi nhánh: <strong>{branchName}</strong>
           </span>
         </div>
-        <p className="muted small" style={{ marginBottom: 16 }}>
-          Chỉ chọn nhân viên thuộc chi nhánh này. Bảng doanh thu dưới lấy từ chấm công, hiển thị theo nghìn đồng.
-        </p>
 
         <div className="row" style={{ marginBottom: 16, alignItems: "center", flexWrap: "wrap", gap: 10 }}>
           <select
@@ -181,7 +178,7 @@ export function KpiManagerPage({ data, selectedBranchId }) {
               {list.length === 0 ? (
                 <tr>
                   <td colSpan={3} className="muted">
-                    Chưa có ai — thêm nhân viên để xem bảng doanh thu.
+                    Chưa có nhân viên.
                   </td>
                 </tr>
               ) : (
@@ -209,25 +206,26 @@ export function KpiManagerPage({ data, selectedBranchId }) {
       <div className="card kpi-manager-table-card">
         <div className="page-header">
           <h3>Bảng doanh thu KPI quản lí</h3>
+          <div className="kpi-manager-unit-hint">Đơn vị: Nghìn đồng (k)</div>
         </div>
-        <div className="row" style={{ marginBottom: 8, alignItems: "center", flexWrap: "wrap", gap: 10 }}>
-          <label className="muted">Tháng</label>
-          <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
-          <button type="button" className="secondary" onClick={() => loadAttendanceMonth()}>
-            Làm mới dữ liệu
+        <div className="row" style={{ marginBottom: 16, alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+          <div className="field">
+            <label className="muted" style={{ marginBottom: 4, display: "block" }}>Chọn tháng báo cáo</label>
+            <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
+          </div>
+          <button type="button" className="secondary" style={{ marginTop: "auto" }} onClick={() => loadAttendanceMonth()}>
+            🔄 Làm mới dữ liệu
           </button>
-          <span className="muted small">
-            Chấm công nhập đồng; bảng hiển thị nghìn đồng. Làm mới sau khi chấm công.
-          </span>
         </div>
-        <p className="muted small kpi-manager-unit-hint" style={{ marginBottom: 8 }}>
-          Đơn vị bảng: <strong>nghìn đồng</strong> (bỏ 3 chữ số cuối so với đồng).
-        </p>
 
         {list.length === 0 ? (
-          <p className="muted">Thêm ít nhất một nhân viên vào KPI quản lí để xem bảng.</p>
+          <div className="card" style={{ background: "rgba(0,0,0,0.05)", textAlign: "center", padding: "40px 20px" }}>
+            <p className="muted">Chưa có nhân viên trong danh sách KPI quản lí.</p>
+          </div>
         ) : loadingAtt ? (
-          <p className="muted">Đang tải doanh thu…</p>
+          <div style={{ textAlign: "center", padding: "40px" }}>
+            <p className="muted">⏳ Đang tải doanh thu…</p>
+          </div>
         ) : (
           <div className="kpi-manager-grid-wrap">
             <table className="kpi-manager-table">
@@ -241,9 +239,8 @@ export function KpiManagerPage({ data, selectedBranchId }) {
                   ))}
                   <th
                     className="kpi-manager-th-total kpi-manager-sticky-total"
-                    title="Tổng (nghìn đồng)"
                   >
-                    Tổng
+                    TỔNG
                   </th>
                 </tr>
               </thead>
@@ -255,11 +252,11 @@ export function KpiManagerPage({ data, selectedBranchId }) {
                     </td>
                     {cells.map((c, idx) => (
                       <td key={dates[idx]} className="kpi-manager-cell-num kpi-manager-cell-day">
-                        {c.value === null ? <span className="muted">—</span> : fmtMoneyThousands(c.value)}
+                        {c.value === null ? <span className="muted" style={{ opacity: 0.3 }}>—</span> : fmtMoneyThousands(c.value)}
                       </td>
                     ))}
                     <td className="kpi-manager-cell-num kpi-manager-cell-total kpi-manager-sticky-total">
-                      <strong>{fmtMoneyThousands(total)}</strong>
+                      {fmtMoneyThousands(total)}
                     </td>
                   </tr>
                 ))}

@@ -88,11 +88,6 @@ export function YesterdayReportPanel({ data, selectedBranchId, reportDate, onRep
     <div className="card">
       <div className="page-header" style={{ marginTop: 0, marginBottom: 10 }}>
         <h3 style={{ margin: 0 }}>{"B\u00e1o c\u00e1o h\u00f4m qua"}</h3>
-        <span className="muted small">
-          {
-            "C\u00f4ng vi\u1ec7c: \u0111\u00e3 / kh\u00f4ng b\u00e1o c\u00e1o. Video: \u0111\u00e3 \u0111\u0103ng / kh\u00f4ng \u0111\u0103ng. Ph\u1ea1t (t\u00f9y ch\u1ecdn) v\u00e0o ph\u1ea1t ph\u00e1t sinh th\u00e1ng t\u01b0\u01a1ng \u1ee9ng."
-          }
-        </span>
       </div>
       <div className="row" style={{ marginBottom: 12, flexWrap: "wrap", gap: 10, alignItems: "center" }}>
         <label className="muted" style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -110,7 +105,7 @@ export function YesterdayReportPanel({ data, selectedBranchId, reportDate, onRep
         </button>
       </div>
       {staffForDate.length === 0 ? (
-        <p className="muted">Không có nhân viên làm việc trong ngày đã chọn (hoặc chưa chọn chi nhánh).</p>
+        <p className="muted">Không có nhân viên.</p>
       ) : (
         <div className="table-scroll">
           <table className="yesterday-report-table">

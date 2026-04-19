@@ -143,7 +143,7 @@ export function KpiConfigPage({ data, selectedBranchId }) {
         <div className="page-header" style={{ marginBottom: 8 }}>
           <h3 style={{ margin: 0, fontSize: 17 }}>KPI thợ chính</h3>
         </div>
-        {!selectedBranchId && <p className="muted">Chọn chi nhánh để xem bảng.</p>}
+        {!selectedBranchId && <p className="muted">Chọn chi nhánh.</p>}
         {selectedBranchId && !cfg && <p className="muted">Đang tải…</p>}
         {selectedBranchId && cfg && (
           <>
@@ -194,15 +194,7 @@ export function KpiConfigPage({ data, selectedBranchId }) {
                             onChange={(e) => updateMainForm("weeklyBookings", e.target.value)}
                           />
                         </td>
-                        <td>
-                          <input
-                            type="number"
-                            min={0}
-                            className="kpi-config-input"
-                            value={mainForm.monthlyBookings ?? 0}
-                            onChange={(e) => updateMainForm("monthlyBookings", e.target.value)}
-                          />
-                        </td>
+                        <td className="muted kpi-config-na">—</td>
                       </tr>
                       <tr>
                         <td>Check-in (%)</td>
@@ -216,16 +208,7 @@ export function KpiConfigPage({ data, selectedBranchId }) {
                             onChange={(e) => updateMainForm("weeklyCheckinRate", e.target.value)}
                           />
                         </td>
-                        <td>
-                          <input
-                            type="number"
-                            min={0}
-                            max={100}
-                            className="kpi-config-input"
-                            value={mainForm.monthlyCheckinRate ?? 0}
-                            onChange={(e) => updateMainForm("monthlyCheckinRate", e.target.value)}
-                          />
-                        </td>
+                        <td className="muted kpi-config-na">—</td>
                       </tr>
                       <tr>
                         <td>Doanh thu tháng (đồng)</td>
@@ -256,10 +239,6 @@ export function KpiConfigPage({ data, selectedBranchId }) {
                     </tbody>
                   </table>
                 </div>
-                <p className="muted small" style={{ marginTop: 8, marginBottom: 0 }}>
-                  Mọi chỉ tiêu trong bảng: đạt khi tổng hoặc tỷ lệ trong kỳ lớn hơn hoặc bằng ngưỡng đã nhập (kể cả bằng ngưỡng).
-                  So khớp với các cột tương ứng trên báo cáo KPI tuần / KPI tháng.
-                </p>
                 <button
                   type="button"
                   className="primary"
@@ -269,11 +248,6 @@ export function KpiConfigPage({ data, selectedBranchId }) {
                 >
                   Lưu KPI cho nhân viên đã chọn
                 </button>
-                {!mainStaffId && (
-                  <p className="muted small" style={{ marginTop: 8 }}>
-                    Chọn nhân viên để lưu.
-                  </p>
-                )}
               </>
             )}
             {selectedBranchId && cfg && !mainForm && mainStaffId && (
@@ -287,7 +261,7 @@ export function KpiConfigPage({ data, selectedBranchId }) {
         <div className="page-header" style={{ marginBottom: 8 }}>
           <h3 style={{ margin: 0, fontSize: 17 }}>KPI thợ phụ</h3>
         </div>
-        {!selectedBranchId && <p className="muted">Chọn chi nhánh để xem bảng.</p>}
+        {!selectedBranchId && <p className="muted">Chọn chi nhánh.</p>}
         {selectedBranchId && !cfg && <p className="muted">Đang tải…</p>}
         {selectedBranchId && cfg && (
           <>
@@ -338,15 +312,7 @@ export function KpiConfigPage({ data, selectedBranchId }) {
                             onChange={(e) => updateAssistForm("weeklyBookings", e.target.value)}
                           />
                         </td>
-                        <td>
-                          <input
-                            type="number"
-                            min={0}
-                            className="kpi-config-input"
-                            value={assistForm.monthlyBookings ?? 0}
-                            onChange={(e) => updateAssistForm("monthlyBookings", e.target.value)}
-                          />
-                        </td>
+                        <td className="muted kpi-config-na">—</td>
                       </tr>
                       <tr>
                         <td>Check-in (%)</td>
@@ -360,16 +326,7 @@ export function KpiConfigPage({ data, selectedBranchId }) {
                             onChange={(e) => updateAssistForm("weeklyCheckinRate", e.target.value)}
                           />
                         </td>
-                        <td>
-                          <input
-                            type="number"
-                            min={0}
-                            max={100}
-                            className="kpi-config-input"
-                            value={assistForm.monthlyCheckinRate ?? 0}
-                            onChange={(e) => updateAssistForm("monthlyCheckinRate", e.target.value)}
-                          />
-                        </td>
+                        <td className="muted kpi-config-na">—</td>
                       </tr>
                       <tr>
                         <td>Lịch đặt gội</td>
@@ -382,9 +339,7 @@ export function KpiConfigPage({ data, selectedBranchId }) {
                             onChange={(e) => updateAssistForm("weeklyWash", e.target.value)}
                           />
                         </td>
-                        <td className="muted small" title="KPI tháng so sánh tổng lịch đặt gội trong tháng với 4× ngưỡng tuần (cùng cột «Lịch đặt gội» ở KPI tháng).">
-                          {(assistForm.weeklyWash ?? 0) > 0 ? `${(assistForm.weeklyWash ?? 0) * 4} (4× tuần)` : "—"}
-                        </td>
+                        <td className="muted kpi-config-na">—</td>
                       </tr>
                       <tr>
                         <td>Doanh thu tháng (đồng)</td>
@@ -415,10 +370,6 @@ export function KpiConfigPage({ data, selectedBranchId }) {
                     </tbody>
                   </table>
                 </div>
-                <p className="muted small" style={{ marginTop: 8, marginBottom: 0 }}>
-                  Mọi chỉ tiêu: đạt khi thực tế trong kỳ lớn hơn hoặc bằng ngưỡng đã nhập.
-                  KPI tháng — lịch đặt gội: so với 4 × (ngưỡng KPI tuần); KPI tuần — lịch đặt gội: so với ngưỡng KPI tuần (cùng cột «Lịch đặt gội» trên báo cáo).
-                </p>
                 <button
                   type="button"
                   className="primary"
@@ -428,11 +379,6 @@ export function KpiConfigPage({ data, selectedBranchId }) {
                 >
                   Lưu KPI cho nhân viên đã chọn
                 </button>
-                {!assistStaffId && (
-                  <p className="muted small" style={{ marginTop: 8 }}>
-                    Chọn nhân viên để lưu.
-                  </p>
-                )}
               </>
             )}
             {selectedBranchId && cfg && !assistForm && assistStaffId && (
