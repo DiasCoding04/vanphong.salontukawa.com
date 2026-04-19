@@ -363,12 +363,16 @@ router.put("/attendance", async (req, res, next) => {
       }
     }
 
-    const bookings = chemical.length;
+    const cbBookings = await all("SELECT type, revenue FROM cross_branch_bookings WHERE staff_id = ? AND date = ?", [staffId, date]);
+    const cbChemical = cbBookings.filter(b => b.type === 'chemical');
+    const cbWash = cbBookings.filter(b => b.type === 'wash');
+
+    const bookings = chemical.length + cbChemical.length;
     const wash =
       staff.type === "assistant"
-        ? washLines.reduce((sum, b) => sum + (b.revenue >= washDoubleCountFromVnd ? 2 : 1), 0)
+        ? washLines.reduce((sum, b) => sum + (b.revenue >= washDoubleCountFromVnd ? 2 : 1), 0) + cbWash.reduce((sum, b) => sum + (b.revenue >= washDoubleCountFromVnd ? 2 : 1), 0)
         : 0;
-    const revenue = [...chemical, ...washLines].reduce((s, b) => s + b.revenue, 0);
+    const revenue = [...chemical, ...washLines, ...cbBookings].reduce((s, b) => s + b.revenue, 0);
     const chemicalJson = JSON.stringify(chemical);
     const washJson = JSON.stringify(washLines);
 
@@ -422,6 +426,202 @@ router.put("/attendance", async (req, res, next) => {
     }
     const rowOut = await get("SELECT * FROM attendance WHERE staff_id = ? AND date = ?", [staffId, date]);
     res.json(rowOut);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/cross-branch-bookings", async (req, res, next) => {
+  try {
+    const { date, month, serviceBranchId } = req.query;
+    if ((!date && !month) || !serviceBranchId) return res.status(400).json({ message: "Thiếu date/month hoặc serviceBranchId" });
+    
+    let query = `
+      SELECT c.*, s.name as staff_name, s.type as staff_type, b.name as staff_branch_name, s.branch_id as staff_branch_id
+      FROM cross_branch_bookings c
+      JOIN staff s ON s.id = c.staff_id
+      JOIN branches b ON b.id = s.branch_id
+      WHERE c.service_branch_id = ?
+    `;
+    const params = [serviceBranchId];
+    
+    if (month) {
+      query += ` AND c.date LIKE ? ORDER BY c.date DESC, c.id DESC`;
+      params.push(`${month}-%`);
+    } else {
+      query += ` AND c.date = ? ORDER BY c.id DESC`;
+      params.push(date);
+    }
+
+    const rows = await all(query, params);
+    res.json(rows);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/cross-branch-bookings", async (req, res, next) => {
+  try {
+    const { serviceBranchId, staffId, date, chemicalBookings = [], washBookings = [] } = req.body;
+    if (!serviceBranchId || !staffId || !date) {
+      return res.status(400).json({ message: "Thiếu dữ liệu bắt buộc" });
+    }
+
+    const staff = await get("SELECT type FROM staff WHERE id = ?", [staffId]);
+    if (!staff) return res.status(404).json({ message: "Không tìm thấy thợ" });
+
+    const kpiConfig = JSON.parse((await get("SELECT config_json FROM kpi_config WHERE id = 1")).config_json);
+    const chemicalMinVnd = kpiConfig.chemicalMinVnd || 450000;
+    const washDoubleCountFromVnd = kpiConfig.washDoubleCountFromVnd || 350000;
+
+    let totalRevenue = 0;
+    let addedChemical = 0;
+    let addedWashVal = 0;
+
+    // Validate
+    for (const b of chemicalBookings) {
+      const rev = Number(b.revenue);
+      if (!Number.isFinite(rev) || rev < chemicalMinVnd) {
+        return res.status(400).json({ message: `Hóa chất phải >= ${chemicalMinVnd.toLocaleString("vi-VN")} VND` });
+      }
+    }
+    for (const b of washBookings) {
+      const rev = Number(b.revenue);
+      if (!Number.isFinite(rev) || rev <= 0) {
+        return res.status(400).json({ message: "Gội phải > 0 VND" });
+      }
+    }
+
+    // Insert
+    for (const b of chemicalBookings) {
+      const rev = Number(b.revenue);
+      await run(`
+        INSERT INTO cross_branch_bookings (service_branch_id, staff_id, date, type, revenue, note)
+        VALUES (?, ?, ?, 'chemical', ?, ?)
+      `, [serviceBranchId, staffId, date, rev, b.note || null]);
+      totalRevenue += rev;
+      addedChemical += 1;
+    }
+
+    for (const b of washBookings) {
+      const rev = Number(b.revenue);
+      await run(`
+        INSERT INTO cross_branch_bookings (service_branch_id, staff_id, date, type, revenue, note)
+        VALUES (?, ?, ?, 'wash', ?, ?)
+      `, [serviceBranchId, staffId, date, rev, b.note || null]);
+      totalRevenue += rev;
+      if (staff.type === "assistant") {
+        addedWashVal += (rev >= washDoubleCountFromVnd ? 2 : 1);
+      }
+    }
+
+    // Update attendance
+    if (addedChemical > 0 || washBookings.length > 0) {
+      await run(`
+        INSERT INTO attendance (staff_id, date, present, bookings, total_clients, checkins, products, revenue, wash, chemical_bookings_json, wash_bookings_json)
+        VALUES (?, ?, 1, ?, 0, 0, 0, ?, ?, '[]', '[]')
+        ON CONFLICT(staff_id, date) DO UPDATE SET
+          bookings = bookings + excluded.bookings,
+          revenue = revenue + excluded.revenue,
+          wash = wash + excluded.wash
+      `, [staffId, date, addedChemical, totalRevenue, addedWashVal]);
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.put("/cross-branch-bookings/:id", async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { serviceBranchId, staffId, date, type, revenue, note } = req.body;
+    if (!serviceBranchId || !staffId || !date || !type || !revenue) {
+      return res.status(400).json({ message: "Thiếu dữ liệu bắt buộc" });
+    }
+
+    const oldRow = await get("SELECT * FROM cross_branch_bookings WHERE id = ?", [id]);
+    if (!oldRow) return res.status(404).json({ message: "Không tìm thấy" });
+
+    // Hoàn tác KPI của bản ghi cũ
+    const oldStaff = await get("SELECT type FROM staff WHERE id = ?", [oldRow.staff_id]);
+    const isOldWash = oldRow.type === 'wash';
+    const isOldChem = oldRow.type === 'chemical';
+    
+    const kpiConfig = JSON.parse((await get("SELECT config_json FROM kpi_config WHERE id = 1")).config_json);
+    const washDoubleCountFromVnd = kpiConfig.washDoubleCountFromVnd || 350000;
+    
+    const oldWashCount = (isOldWash && oldRow.revenue >= washDoubleCountFromVnd) ? 2 : (isOldWash ? 1 : 0);
+    const oldWashVal = (oldStaff.type === "assistant" && isOldWash) ? oldWashCount : 0;
+    const oldBookVal = isOldChem ? 1 : 0;
+
+    await run(`
+      UPDATE attendance SET
+        bookings = MAX(0, bookings - ?),
+        revenue = MAX(0, revenue - ?),
+        wash = MAX(0, wash - ?)
+      WHERE staff_id = ? AND date = ?
+    `, [oldBookVal, oldRow.revenue, oldWashVal, oldRow.staff_id, oldRow.date]);
+
+    // Cập nhật bản ghi mới
+    await run(`
+      UPDATE cross_branch_bookings
+      SET service_branch_id = ?, staff_id = ?, date = ?, type = ?, revenue = ?, note = ?
+      WHERE id = ?
+    `, [serviceBranchId, staffId, date, type, revenue, note || null, id]);
+
+    // Áp dụng KPI của bản ghi mới
+    const newStaff = await get("SELECT type FROM staff WHERE id = ?", [staffId]);
+    const isNewWash = type === 'wash';
+    const isNewChem = type === 'chemical';
+    const newWashCount = (isNewWash && revenue >= washDoubleCountFromVnd) ? 2 : (isNewWash ? 1 : 0);
+    const newWashVal = (newStaff.type === "assistant" && isNewWash) ? newWashCount : 0;
+    const newBookVal = isNewChem ? 1 : 0;
+
+    await run(`
+      INSERT INTO attendance (staff_id, date, present, bookings, total_clients, checkins, products, revenue, wash, chemical_bookings_json, wash_bookings_json)
+      VALUES (?, ?, 1, ?, 0, 0, 0, ?, ?, '[]', '[]')
+      ON CONFLICT(staff_id, date) DO UPDATE SET
+        bookings = bookings + excluded.bookings,
+        revenue = revenue + excluded.revenue,
+        wash = wash + excluded.wash
+    `, [staffId, date, newBookVal, revenue, newWashVal]);
+
+    res.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete("/cross-branch-bookings/:id", async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const row = await get("SELECT * FROM cross_branch_bookings WHERE id = ?", [id]);
+    if (!row) return res.status(404).json({ message: "Không tìm thấy" });
+
+    await run("DELETE FROM cross_branch_bookings WHERE id = ?", [id]);
+
+    const staff = await get("SELECT type FROM staff WHERE id = ?", [row.staff_id]);
+    const isWash = row.type === 'wash';
+    const isChem = row.type === 'chemical';
+    
+    const kpiConfig = JSON.parse((await get("SELECT config_json FROM kpi_config WHERE id = 1")).config_json);
+    const washDoubleCountFromVnd = kpiConfig.washDoubleCountFromVnd || 350000;
+    const washCount = (isWash && row.revenue >= washDoubleCountFromVnd) ? 2 : (isWash ? 1 : 0);
+    const washVal = (staff.type === "assistant" && isWash) ? washCount : 0;
+    const bookVal = isChem ? 1 : 0;
+
+    // Trừ đi trong attendance
+    await run(`
+      UPDATE attendance SET
+        bookings = MAX(0, bookings - ?),
+        revenue = MAX(0, revenue - ?),
+        wash = MAX(0, wash - ?)
+      WHERE staff_id = ? AND date = ?
+    `, [bookVal, row.revenue, washVal, row.staff_id, row.date]);
+
+    res.json({ success: true });
   } catch (error) {
     next(error);
   }

@@ -89,6 +89,15 @@ export const api = {
   getManagerKpiStaff: (branchId) => request(`/manager-kpi-staff?branchId=${encodeURIComponent(branchId)}`),
   addManagerKpiStaff: (payload) => request("/manager-kpi-staff", { method: "POST", body: JSON.stringify(payload) }),
   removeManagerKpiStaff: (staffId) => request(`/manager-kpi-staff/${staffId}`, { method: "DELETE" }),
+  getCrossBranchBookings: (params) => {
+    let url = `/cross-branch-bookings?serviceBranchId=${params.serviceBranchId}`;
+    if (params.date) url += `&date=${params.date}`;
+    if (params.month) url += `&month=${params.month}`;
+    return request(url);
+  },
+  addCrossBranchBooking: (payload) => request("/cross-branch-bookings", { method: "POST", body: JSON.stringify(payload) }),
+  updateCrossBranchBooking: (id, payload) => request(`/cross-branch-bookings/${id}`, { method: "PUT", body: JSON.stringify(payload) }),
+  deleteCrossBranchBooking: (id) => request(`/cross-branch-bookings/${id}`, { method: "DELETE" }),
   getDailyReports: (date, branchId) =>
     request(
       `/daily-reports?date=${encodeURIComponent(date)}&branchId=${encodeURIComponent(branchId)}`

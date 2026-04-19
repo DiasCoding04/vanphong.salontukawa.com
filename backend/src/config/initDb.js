@@ -219,6 +219,19 @@ async function initDb() {
     FOREIGN KEY(staff_id) REFERENCES staff(id) ON DELETE CASCADE
   )`);
 
+  await run(`CREATE TABLE IF NOT EXISTS cross_branch_bookings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    service_branch_id INTEGER NOT NULL,
+    staff_id INTEGER NOT NULL,
+    date TEXT NOT NULL,
+    type TEXT NOT NULL CHECK(type IN ('chemical', 'wash')),
+    revenue INTEGER NOT NULL,
+    note TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(service_branch_id) REFERENCES branches(id),
+    FOREIGN KEY(staff_id) REFERENCES staff(id)
+  )`);
+
   const hasKpi = await get("SELECT COUNT(*) AS total FROM kpi_config");
   if (hasKpi.total === 0) {
     await run("INSERT INTO kpi_config (id, config_json) VALUES (1, ?)", [JSON.stringify(defaultKpiConfig)]);

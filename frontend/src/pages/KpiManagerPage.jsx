@@ -191,8 +191,8 @@ export function KpiManagerPage({ data, selectedBranchId }) {
                       </span>
                     </td>
                     <td>
-                      <button type="button" className="secondary" onClick={() => handleRemove(r.id)}>
-                        Gỡ
+                      <button type="button" className="icon-btn danger" title="Gỡ" onClick={() => handleRemove(r.id)}>
+                        🗑️
                       </button>
                     </td>
                   </tr>

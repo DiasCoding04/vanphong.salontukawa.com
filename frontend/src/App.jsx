@@ -27,12 +27,31 @@ const kpiTopTabs = [
 ];
 
 function App() {
-  const [activeTab, setActiveTab] = useState("dashboard");
-  const [kpiSubTab, setKpiSubTab] = useState("month");
-  const [selectedBranchId, setSelectedBranchId] = useState(null);
+  const [activeTab, setActiveTab] = useState(() => localStorage.getItem("activeTab") || "dashboard");
+  const [kpiSubTab, setKpiSubTab] = useState(() => localStorage.getItem("kpiSubTab") || "month");
+  const [selectedBranchId, setSelectedBranchId] = useState(() => {
+    const saved = localStorage.getItem("selectedBranchId");
+    return saved ? Number(saved) : null;
+  });
   const [newBranchName, setNewBranchName] = useState("");
   const [theme, setTheme] = useState(() => localStorage.getItem("theme") || "dark");
   const data = useData();
+
+  useEffect(() => {
+    localStorage.setItem("activeTab", activeTab);
+  }, [activeTab]);
+
+  useEffect(() => {
+    localStorage.setItem("kpiSubTab", kpiSubTab);
+  }, [kpiSubTab]);
+
+  useEffect(() => {
+    if (selectedBranchId) {
+      localStorage.setItem("selectedBranchId", selectedBranchId);
+    } else {
+      localStorage.removeItem("selectedBranchId");
+    }
+  }, [selectedBranchId]);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -76,7 +95,7 @@ function App() {
                 <button className="branch-select" onClick={() => setSelectedBranchId(branch.id)}>
                   {branch.name}
                 </button>
-                <button className="branch-delete" onClick={() => handleDeleteBranch(branch.id)}>Xóa</button>
+                <button className="branch-delete" onClick={() => handleDeleteBranch(branch.id)} title="Xóa">🗑️</button>
               </div>
             ))}
           </div>

@@ -150,7 +150,7 @@ export function PersonalInfoPage({ data, selectedBranchId }) {
                   <td>{row.hometown || "-"}</td>
                   <td className="col-actions">
                     <button type="button" className="icon-btn" title="Sửa" onClick={() => handleEditRow(row.staffId)}>
-                      Sửa
+                      ✏️
                     </button>
                   </td>
                 </tr>

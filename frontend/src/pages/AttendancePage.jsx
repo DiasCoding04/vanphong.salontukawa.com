@@ -52,13 +52,276 @@ function isEmployedOnDate(staff, isoDate) {
   return true;
 }
 
+function CrossBranchPanel({ 
+  data, serviceBranchId, crossBookings, onRefresh,
+  dateCross, setDateCross,
+  monthCross, setMonthCross,
+  crossViewType, setCrossViewType 
+}) {
+  const [staffBranchId, setStaffBranchId] = useState("");
+  const [crossModal, setCrossModal] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const staffOptions = useMemo(() => {
+    if (!staffBranchId) return [];
+    return data.staff
+      .filter((s) => s.status === "working" && Number(s.branchId) === Number(staffBranchId))
+      .sort((a, b) => a.name.localeCompare(b.name, "vi"));
+  }, [data.staff, staffBranchId]);
+
+  async function handleDelete(id) {
+    if (!confirm("Xóa lịch này?")) return;
+    try {
+      await api.deleteCrossBranchBooking(id);
+      onRefresh();
+    } catch (e) {
+      alert(e.message || "Lỗi");
+    }
+  }
+
+  function openModal(staff) {
+    setCrossModal({
+      staffId: staff.id,
+      staffName: staff.name,
+      staffType: staff.type,
+      chemicalLines: [],
+      washLines: []
+    });
+  }
+
+  function closeModal() {
+    setCrossModal(null);
+  }
+
+  async function handleSaveModal() {
+    if (!crossModal) return;
+
+    const chemicalPayload = crossModal.chemicalLines.map(l => ({
+      revenue: Math.round(Number(String(l.revenue).replace(/\s/g, ""))),
+      note: l.note
+    })).filter(l => l.revenue > 0);
+
+    const washPayload = crossModal.washLines.map(l => ({
+      revenue: Math.round(Number(String(l.revenue).replace(/\s/g, ""))),
+      note: l.note
+    })).filter(l => l.revenue > 0);
+
+    if (chemicalPayload.length === 0 && washPayload.length === 0) {
+      alert("Vui lòng thêm ít nhất 1 lịch có doanh thu.");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      await api.addCrossBranchBooking({
+        serviceBranchId,
+        staffId: crossModal.staffId,
+        date: dateCross,
+        chemicalBookings: chemicalPayload,
+        washBookings: washPayload
+      });
+      closeModal();
+      onRefresh();
+    } catch (e) {
+      alert(e.message || "Lỗi");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div className="page-header" style={{ marginTop: 0, marginBottom: 16 }}>
+          <h3 style={{ margin: 0 }}>Thêm lịch hẹn chéo chi nhánh</h3>
+        </div>
+        <div className="row" style={{ marginBottom: 16, alignItems: "flex-end", flexWrap: "wrap", gap: 12 }}>
+          <div className="field">
+            <label className="muted">Chọn chi nhánh của thợ</label>
+            <select value={staffBranchId} onChange={(e) => setStaffBranchId(e.target.value)}>
+              <option value="">— Chọn chi nhánh —</option>
+              {data.branches
+                .filter((b) => Number(b.id) !== Number(serviceBranchId))
+                .map((b) => (
+                <option key={b.id} value={b.id}>{b.name}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {staffBranchId && staffOptions.length > 0 && (
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Nhân viên</th>
+                <th>Loại thợ</th>
+                <th style={{ width: 140 }}>Hành động</th>
+              </tr>
+            </thead>
+            <tbody>
+              {staffOptions.map(s => (
+                <tr key={s.id}>
+                  <td>{s.name}</td>
+                  <td>{s.type === 'main' ? 'Thợ chính' : 'Thợ phụ'}</td>
+                  <td>
+                    <button className="secondary" onClick={() => openModal(s)}>Thêm lịch chéo</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {staffBranchId && staffOptions.length === 0 && (
+          <p className="muted">Không có nhân viên nào.</p>
+        )}
+      </div>
+
+      <div className="card">
+        <div className="page-header" style={{ marginTop: 0, marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h3 style={{ margin: 0 }}>Danh sách khách đặt lịch chéo</h3>
+          <div className="row" style={{ gap: 10, margin: 0 }}>
+            <select value={crossViewType} onChange={(e) => setCrossViewType(e.target.value)} style={{ padding: '6px 12px' }}>
+              <option value="date">Theo ngày</option>
+              <option value="month">Theo tháng</option>
+            </select>
+            {crossViewType === "date" ? (
+              <input type="date" value={dateCross} onChange={(e) => setDateCross(e.target.value)} style={{ padding: '6px 12px' }} />
+            ) : (
+              <input type="month" value={monthCross} onChange={(e) => setMonthCross(e.target.value)} style={{ padding: '6px 12px' }} />
+            )}
+          </div>
+        </div>
+
+        {crossBookings.length === 0 ? (
+          <p className="muted">Chưa có lịch đặt chéo nào.</p>
+        ) : (
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Ngày</th>
+                <th>Thợ</th>
+                <th>Chi nhánh thợ</th>
+                <th>Loại lịch</th>
+                <th>Doanh thu</th>
+                <th style={{ width: 120 }}>Hành động</th>
+              </tr>
+            </thead>
+            <tbody>
+              {crossBookings.map((b) => (
+                <tr key={b.id}>
+                  <td>{b.date}</td>
+                  <td>{b.staff_name} <span className={`badge ${b.staff_type === "main" ? "badge-blue" : "badge-yellow"}`}>{b.staff_type === "main" ? "Chính" : "Phụ"}</span></td>
+                  <td>{b.staff_branch_name}</td>
+                  <td>{b.type === "chemical" ? "Hóa chất" : "Gội"}</td>
+                  <td>{b.revenue.toLocaleString("vi-VN")} đ</td>
+                  <td>
+                    <button className="icon-btn danger" title="Xóa" onClick={() => handleDelete(b.id)}>
+                      🗑️
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {crossModal && (
+        <div className="attendance-modal" role="dialog" aria-modal="true">
+          <button type="button" className="attendance-modal-backdrop" onClick={closeModal} />
+          <div className="attendance-modal-panel" style={{ maxWidth: 800 }}>
+            <button type="button" className="attendance-modal-close" onClick={closeModal}>×</button>
+            <h3 className="attendance-modal-title">Thêm lịch chéo — {crossModal.staffName}</h3>
+            <p className="muted attendance-modal-sub">Ngày: {date}</p>
+
+            <div className="attendance-modal-bookings attendance-modal-bookings--split">
+              {/* Cột hóa chất */}
+              <div className="attendance-modal-section">
+                <div className="attendance-modal-section-head">
+                  <h4>Lịch đặt hóa chất</h4>
+                </div>
+                <ul className="attendance-modal-lines">
+                  {crossModal.chemicalLines.map((line, idx) => (
+                    <li key={line.id} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                      <span className="attendance-line-idx">{idx + 1}</span>
+                      <input
+                        type="number"
+                        placeholder="Doanh thu (VND)"
+                        value={line.revenue}
+                        style={{ flex: 1, minWidth: 120 }}
+                        onChange={(e) => setCrossModal({
+                          ...crossModal,
+                          chemicalLines: crossModal.chemicalLines.map(l => l.id === line.id ? { ...l, revenue: e.target.value } : l)
+                        })}
+                      />
+                      <button className="icon-btn danger" title="Xóa" onClick={() => setCrossModal({
+                        ...crossModal,
+                        chemicalLines: crossModal.chemicalLines.filter(l => l.id !== line.id)
+                      })}>🗑️</button>
+                    </li>
+                  ))}
+                </ul>
+                <button className="secondary" onClick={() => setCrossModal({
+                  ...crossModal,
+                  chemicalLines: [...crossModal.chemicalLines, { id: Date.now(), revenue: "", note: "" }]
+                })}>+ Thêm lịch hóa chất</button>
+              </div>
+
+              {/* Cột gội */}
+              <div className="attendance-modal-section">
+                <div className="attendance-modal-section-head">
+                  <h4>Lịch đặt gội</h4>
+                </div>
+                <ul className="attendance-modal-lines">
+                  {crossModal.washLines.map((line, idx) => (
+                    <li key={line.id} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                      <span className="attendance-line-idx">{idx + 1}</span>
+                      <input
+                        type="number"
+                        placeholder="Doanh thu (VND)"
+                        value={line.revenue}
+                        style={{ flex: 1, minWidth: 120 }}
+                        onChange={(e) => setCrossModal({
+                          ...crossModal,
+                          washLines: crossModal.washLines.map(l => l.id === line.id ? { ...l, revenue: e.target.value } : l)
+                        })}
+                      />
+                      <button className="icon-btn danger" title="Xóa" onClick={() => setCrossModal({
+                        ...crossModal,
+                        washLines: crossModal.washLines.filter(l => l.id !== line.id)
+                      })}>🗑️</button>
+                    </li>
+                  ))}
+                </ul>
+                <button className="secondary" onClick={() => setCrossModal({
+                  ...crossModal,
+                  washLines: [...crossModal.washLines, { id: Date.now(), revenue: "", note: "" }]
+                })}>+ Thêm lịch gội</button>
+              </div>
+            </div>
+
+            <div className="attendance-modal-actions" style={{ marginTop: 24 }}>
+              <button className="secondary" onClick={closeModal}>Hủy</button>
+              <button className="primary" onClick={handleSaveModal} disabled={loading}>{loading ? "Đang lưu..." : "Lưu"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 export function AttendancePage({ data, selectedBranchId }) {
   const [tab, setTab] = useState("kpi");
   const [dateKpi, setDateKpi] = useState(() => addIsoDays(vietnamTodayIsoDate(), -1));
   const [dateStatus, setDateStatus] = useState(() => vietnamTodayIsoDate());
+  const [dateCross, setDateCross] = useState(() => addIsoDays(vietnamTodayIsoDate(), -1));
+  const [monthCross, setMonthCross] = useState(() => vietnamTodayIsoDate().slice(0, 7));
+  const [crossViewType, setCrossViewType] = useState("date");
   const [reportDate, setReportDate] = useState(() => addIsoDays(vietnamTodayIsoDate(), -1));
   const [rowsKpi, setRowsKpi] = useState([]);
   const [rowsStatus, setRowsStatus] = useState([]);
+  const [crossBookings, setCrossBookings] = useState([]);
   const [modal, setModal] = useState(null);
   const [kpiConfig, setKpiConfig] = useState(null);
 
@@ -133,37 +396,51 @@ export function AttendancePage({ data, selectedBranchId }) {
       if (!selectedBranchId) {
         setRowsKpi([]);
         setRowsStatus([]);
+        setCrossBookings([]);
         return;
       }
       try {
-        const [kpi, st] = await Promise.all([
+        const [kpi, st, cb] = await Promise.all([
           api.getAttendanceByDate(dateKpi, selectedBranchId),
-          api.getAttendanceByDate(dateStatus, selectedBranchId)
+          api.getAttendanceByDate(dateStatus, selectedBranchId),
+          api.getCrossBranchBookings({
+            serviceBranchId: selectedBranchId,
+            date: crossViewType === "date" ? dateCross : undefined,
+            month: crossViewType === "month" ? monthCross : undefined
+          })
         ]);
         if (!cancelled) {
           setRowsKpi(kpi);
           setRowsStatus(st);
+          setCrossBookings(cb);
         }
       } catch {
         if (!cancelled) {
           setRowsKpi([]);
           setRowsStatus([]);
+          setCrossBookings([]);
         }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [dateKpi, dateStatus, selectedBranchId]);
+  }, [dateKpi, dateStatus, dateCross, monthCross, crossViewType, selectedBranchId]);
 
   async function refresh() {
     if (!selectedBranchId) return;
-    const [kpi, st] = await Promise.all([
+    const [kpi, st, cb] = await Promise.all([
       api.getAttendanceByDate(dateKpi, selectedBranchId),
-      api.getAttendanceByDate(dateStatus, selectedBranchId)
+      api.getAttendanceByDate(dateStatus, selectedBranchId),
+      api.getCrossBranchBookings({
+        serviceBranchId: selectedBranchId,
+        date: crossViewType === "date" ? dateCross : undefined,
+        month: crossViewType === "month" ? monthCross : undefined
+      })
     ]);
     setRowsKpi(kpi);
     setRowsStatus(st);
+    setCrossBookings(cb);
   }
 
   function closeModal() {
@@ -233,7 +510,9 @@ export function AttendancePage({ data, selectedBranchId }) {
       staffType: staff.type,
       presenceStatus,
       lateMinutes: row?.late_minutes != null && row.late_minutes !== "" ? Number(row.late_minutes) : 0,
-      latePenalty: row?.late_penalty != null && row.late_penalty !== "" ? Number(row.late_penalty) : 0
+      latePenalty: row?.late_penalty != null && row.late_penalty !== "" ? Number(row.late_penalty) : 0,
+      additionalPenalty: "",
+      additionalPenaltyNote: ""
     });
   }
 
@@ -317,6 +596,12 @@ export function AttendancePage({ data, selectedBranchId }) {
       }
     }
 
+    const hasAdditionalPenalty = Number(modal.additionalPenalty) > 0;
+    if (hasAdditionalPenalty && !modal.additionalPenaltyNote?.trim()) {
+      alert("Vui lòng nhập ghi chú cho khoản phạt phát sinh.");
+      return;
+    }
+
     const row = byStaffStatus.get(modal.staffId);
     const { chemicalBookings, washBookings } = chemicalWashPayloadFromRow(row, modal.staffType);
 
@@ -333,6 +618,17 @@ export function AttendancePage({ data, selectedBranchId }) {
         chemicalBookings,
         washBookings
       });
+
+      if (hasAdditionalPenalty) {
+        await api.addSalaryAdjustment({
+          staffId: modal.staffId,
+          month: modal.date.slice(0, 7),
+          type: "penalty",
+          amount: Number(modal.additionalPenalty),
+          note: `${modal.date}: ${modal.additionalPenaltyNote.trim()}`
+        });
+      }
+
       closeModal();
       await refresh();
     } catch (e) {
@@ -369,6 +665,13 @@ export function AttendancePage({ data, selectedBranchId }) {
           </button>
           <button
             type="button"
+            className={tab === "cross" ? "attendance-tab active" : "attendance-tab"}
+            onClick={() => setTab("cross")}
+          >
+            Lịch đặt chéo
+          </button>
+          <button
+            type="button"
             className={tab === "yesterday" ? "attendance-tab active" : "attendance-tab"}
             onClick={() => setTab("yesterday")}
           >
@@ -396,6 +699,16 @@ export function AttendancePage({ data, selectedBranchId }) {
             </button>
             <button type="button" className="secondary" onClick={() => refresh()}>
               {"L\u00e0m m\u1edbi"}
+            </button>
+          </div>
+        ) : tab === "cross" ? (
+          <div className="row" style={{ marginTop: 12, marginBottom: 0, flexWrap: "wrap", gap: 10 }}>
+            <label className="muted" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              Ngày làm (để thêm lịch)
+              <input type="date" value={dateCross} onChange={(e) => setDateCross(e.target.value)} />
+            </label>
+            <button type="button" className="secondary" onClick={() => refresh()}>
+              Làm mới
             </button>
           </div>
         ) : null}
@@ -581,6 +894,16 @@ export function AttendancePage({ data, selectedBranchId }) {
         </>
       )}
 
+      {tab === "cross" && (
+        <CrossBranchPanel
+          data={data}
+          serviceBranchId={selectedBranchId}
+          date={dateCross}
+          crossBookings={crossBookings}
+          onRefresh={refresh}
+        />
+      )}
+
       {tab === "yesterday" && (
         <YesterdayReportPanel
           data={data}
@@ -659,7 +982,7 @@ export function AttendancePage({ data, selectedBranchId }) {
                       <span className="attendance-line-idx">{idx + 1}</span>
                       <input
                         type="number"
-                        min={CHEMICAL_MIN_VND}
+                        min={chemicalMinVnd}
                         placeholder="Doanh thu lịch (VND)"
                         value={line.revenue}
                         onChange={(e) => {
@@ -675,6 +998,7 @@ export function AttendancePage({ data, selectedBranchId }) {
                       <button
                         type="button"
                         className="icon-btn danger"
+                        title="Xóa"
                         onClick={() =>
                           setModal({
                             ...modal,
@@ -682,7 +1006,7 @@ export function AttendancePage({ data, selectedBranchId }) {
                           })
                         }
                       >
-                        {"X\u00f3a"}
+                        {"🗑️"}
                       </button>
                     </li>
                   ))}
@@ -733,6 +1057,7 @@ export function AttendancePage({ data, selectedBranchId }) {
                       <button
                         type="button"
                         className="icon-btn danger"
+                        title="Xóa"
                         onClick={() =>
                           setModal({
                             ...modal,
@@ -740,7 +1065,7 @@ export function AttendancePage({ data, selectedBranchId }) {
                           })
                         }
                       >
-                        {"X\u00f3a"}
+                        {"🗑️"}
                       </button>
                     </li>
                   ))}
@@ -829,6 +1154,33 @@ export function AttendancePage({ data, selectedBranchId }) {
                 <div className="attendance-modal-field" />
               </div>
             ) : null}
+
+            <div className="attendance-modal-section">
+              <h4 style={{ margin: "0 0 10px", fontSize: 14, color: "var(--text-muted)" }}>
+                Thêm phạt phát sinh (tuỳ chọn)
+              </h4>
+              <div className="row" style={{ alignItems: "flex-start" }}>
+                <div className="attendance-modal-field" style={{ flex: 1, minWidth: 140 }}>
+                  <label>Tiền phạt (VND)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    placeholder="VD: 50000"
+                    value={modal.additionalPenalty}
+                    onChange={(e) => setModal({ ...modal, additionalPenalty: e.target.value })}
+                  />
+                </div>
+                <div className="attendance-modal-field" style={{ flex: 1, minWidth: 140 }}>
+                  <label>Ghi chú lý do phạt</label>
+                  <input
+                    type="text"
+                    placeholder="VD: Làm hỏng dụng cụ"
+                    value={modal.additionalPenaltyNote}
+                    onChange={(e) => setModal({ ...modal, additionalPenaltyNote: e.target.value })}
+                  />
+                </div>
+              </div>
+            </div>
 
             <div className="attendance-modal-actions">
               <button type="button" className="secondary" onClick={closeModal}>

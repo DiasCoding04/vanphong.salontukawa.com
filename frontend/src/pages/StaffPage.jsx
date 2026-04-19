@@ -148,8 +148,8 @@ export function StaffPage({ data, selectedBranchId }) {
                   <td>{s.startDate || "-"}</td>
                   <td>{showEndDate ? (s.endDate || "-") : "-"}</td>
                   <td className="col-actions">
-                    <button className="icon-btn" title={"S\u1eeda"} onClick={() => handleEdit(s)}>{"Sua"}</button>
-                    <button className="icon-btn danger" title={"X\u00f3a"} onClick={() => handleDelete(s)}>{"Xoa"}</button>
+                    <button className="icon-btn" title={"S\u1eeda"} onClick={() => handleEdit(s)}>{"✏️"}</button>
+                    <button className="icon-btn danger" title={"X\u00f3a"} onClick={() => handleDelete(s)}>{"🗑️"}</button>
                   </td>
                 </tr>
               ))}
