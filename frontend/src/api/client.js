@@ -11,7 +11,9 @@ async function request(path, options = {}) {
     try {
       const j = await res.json();
       if (j.message) msg = j.message;
-    } catch (_) {}
+    } catch {
+      // ignore
+    }
     throw new Error(msg);
   }
   if (res.status === 204) return null;
@@ -43,7 +45,9 @@ export const api = {
       try {
         const j = await res.json();
         if (j.message) msg = j.message;
-      } catch (_) {}
+      } catch {
+        // ignore
+      }
       throw new Error(msg);
     }
     return res.json();

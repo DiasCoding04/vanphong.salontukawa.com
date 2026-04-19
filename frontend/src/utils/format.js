@@ -14,6 +14,20 @@ export function currentMonth() {
   return vietnamCalendarDateString().slice(0, 7);
 }
 
+/** Format ngày hiển thị dạng dd/mm/yy */
+export function formatViDateShort(isoDateStr) {
+  if (!isoDateStr) return "-";
+  // Nếu là dạng DD/MM/YYYY
+  const slashMatch = isoDateStr.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (slashMatch) return `${slashMatch[1]}/${slashMatch[2]}/${slashMatch[3].slice(-2)}`;
+  
+  // Nếu là dạng YYYY-MM-DD
+  const isoMatch = isoDateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoMatch) return `${isoMatch[3]}/${isoMatch[2]}/${isoMatch[1].slice(-2)}`;
+  
+  return isoDateStr;
+}
+
 /** % check-in = check-in / số khách đã làm (làm tròn). Không có khách → "—". */
 export function formatCheckinRatePct(totalClients, checkins) {
   const tc = Number(totalClients) || 0;

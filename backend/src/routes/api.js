@@ -274,7 +274,7 @@ function parseAttendancePresence(body) {
 function formatViDateFromIso(iso) {
   const [y, m, d] = String(iso).split("-");
   if (!y || !m || !d) return iso;
-  return `${d}/${m}/${y}`;
+  return `${d}/${m}/${y.slice(-2)}`;
 }
 
 function isEmployedOnDate(staff, isoDate) {
@@ -1175,7 +1175,7 @@ router.put("/daily-reports", async (req, res, next) => {
       if (!staffId) {
         return res.status(400).json({ message: "each item needs staffId" });
       }
-      if (!["reported", "not_reported"].includes(workStatus)) {
+      if (!["reported", "not_reported", "late_reported"].includes(workStatus)) {
         return res.status(400).json({ message: "invalid workStatus" });
       }
       if (!["posted", "not_posted"].includes(videoStatus)) {
@@ -1191,7 +1191,7 @@ router.put("/daily-reports", async (req, res, next) => {
       }
 
       let wp = null;
-      if (workStatus === "not_reported") {
+      if (["not_reported", "late_reported"].includes(workStatus)) {
         if (workPenalty !== "" && workPenalty != null && workPenalty !== undefined) {
           wp = Math.round(Number(workPenalty));
           if (!Number.isFinite(wp) || wp < 0) {
@@ -1225,11 +1225,12 @@ router.put("/daily-reports", async (req, res, next) => {
       await run("DELETE FROM salary_adjustments WHERE daily_report_id = ?", [dr.id]);
 
       const viNote = formatViDateFromIso(reportDate);
-      if (workStatus === "not_reported" && wp != null && wp > 0) {
+      if (["not_reported", "late_reported"].includes(workStatus) && wp != null && wp > 0) {
+        const statusText = workStatus === "not_reported" ? "không báo cáo" : "báo cáo muộn";
         await run(
           `INSERT INTO salary_adjustments (staff_id, month, type, amount, note, attendance_id, daily_report_id)
            VALUES (?, ?, 'penalty', ?, ?, NULL, ?)`,
-          [staffId, month, wp, `Báo cáo công việc (${viNote}): không báo cáo`, dr.id]
+          [staffId, month, wp, `Báo cáo công việc (${viNote}): ${statusText}`, dr.id]
         );
       }
       if (videoStatus === "not_posted" && vp != null && vp > 0) {

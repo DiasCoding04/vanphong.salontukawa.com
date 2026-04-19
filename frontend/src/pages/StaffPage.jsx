@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { api } from "../api/client";
 import { vietnamTodayIsoDate } from "../utils/vietnamTime";
+import { formatViDateShort } from "../utils/format";
 
 function newStaffForm() {
   return {
@@ -145,8 +146,8 @@ export function StaffPage({ data, selectedBranchId }) {
                   </td>
                   <td>{new Intl.NumberFormat("vi-VN").format(s.holdRemaining || 0)} VND</td>
                   <td>{s.accountNumber || "-"}</td>
-                  <td>{s.startDate || "-"}</td>
-                  <td>{showEndDate ? (s.endDate || "-") : "-"}</td>
+                  <td>{s.startDate ? formatViDateShort(s.startDate) : "-"}</td>
+                  <td>{showEndDate ? (s.endDate ? formatViDateShort(s.endDate) : "-") : "-"}</td>
                   <td className="col-actions">
                     <button className="icon-btn" title={"S\u1eeda"} onClick={() => handleEdit(s)}>{"✏️"}</button>
                     <button className="icon-btn danger" title={"X\u00f3a"} onClick={() => handleDelete(s)}>{"🗑️"}</button>

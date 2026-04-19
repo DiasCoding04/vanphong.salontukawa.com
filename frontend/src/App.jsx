@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useData } from "./hooks/useData";
 import { api } from "./api/client";
 import { DashboardPage } from "./pages/DashboardPage";
@@ -62,7 +62,7 @@ function App() {
     setTheme((prev) => (prev === "dark" ? "light" : "dark"));
   };
 
-  const body = useMemo(() => {
+  const renderBody = () => {
     if (!selectedBranchId && activeTab !== "branches" && activeTab !== "dashboard") {
       return (
         <div className="card">
@@ -110,7 +110,7 @@ function App() {
     );
     if (activeTab === "salary") return <SalaryPage data={data} selectedBranchId={selectedBranchId} />;
     return <DashboardPage data={data} />;
-  }, [activeTab, data, selectedBranchId, kpiSubTab]);
+  };
 
   async function handleCreateBranch() {
     const name = newBranchName.trim();
@@ -126,7 +126,7 @@ function App() {
       await api.deleteBranch(id);
       if (selectedBranchId === id) setSelectedBranchId(null);
       await data.reload();
-    } catch (error) {
+    } catch {
       alert("Không thể xóa chi nhánh có nhân viên.");
     }
   }
@@ -187,7 +187,9 @@ function App() {
             </button>
           </div>
         </header>
-        <section className="content">{body}</section>
+        <section className="content">
+          {data.loading ? <p className="muted">Đang tải...</p> : data.error ? <p className="error-text">Lỗi tải dữ liệu: {data.error}</p> : renderBody()}
+        </section>
       </main>
     </div>
   );

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, getCccdImageUrl } from "../api/client";
 import { isBirthdayOnVietnamCalendarDay, vietnamTomorrowParts } from "../utils/vietnamTime";
+import { formatViDateShort } from "../utils/format";
 
 const emptyForm = {
   staffId: "",
@@ -146,7 +147,7 @@ export function PersonalInfoPage({ data, selectedBranchId }) {
                       "-"
                     )}
                   </td>
-                  <td>{row.birthDate || "-"}</td>
+                  <td>{row.birthDate ? formatViDateShort(row.birthDate) : "-"}</td>
                   <td>{row.hometown || "-"}</td>
                   <td className="col-actions">
                     <button type="button" className="icon-btn" title="Sửa" onClick={() => handleEditRow(row.staffId)}>

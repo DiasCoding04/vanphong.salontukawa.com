@@ -1,6 +1,7 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
-import { currentMonth, fmtMoneyThousands } from "../utils/format";
+import { currentMonth, fmtMoneyThousands, formatViDateShort } from "../utils/format";
 
 /** Các ngày YYYY-MM-DD trong tháng `YYYY-MM`. */
 function monthIsoDates(monthStr) {
@@ -233,7 +234,7 @@ export function KpiManagerPage({ data, selectedBranchId }) {
                 <tr>
                   <th className="kpi-manager-sticky-name">Nhân viên</th>
                   {dates.map((iso) => (
-                    <th key={iso} className="kpi-manager-th-day" title={iso}>
+                    <th key={iso} className="kpi-manager-th-day" title={formatViDateShort(iso)}>
                       {iso.slice(8, 10)}
                     </th>
                   ))}

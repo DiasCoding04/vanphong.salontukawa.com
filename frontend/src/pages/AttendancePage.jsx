@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import { addIsoDays, vietnamTodayIsoDate } from "../utils/vietnamTime";
-import { formatCheckinRatePct } from "../utils/format";
+import { formatCheckinRatePct, formatViDateShort } from "../utils/format";
 import { YesterdayReportPanel } from "./YesterdayReportPage";
 
 function formatVnd(n) {
@@ -232,7 +232,7 @@ function CrossBranchPanel({
           <div className="attendance-modal-panel" style={{ maxWidth: 800 }}>
             <button type="button" className="attendance-modal-close" onClick={closeModal}>×</button>
             <h3 className="attendance-modal-title">Thêm lịch chéo — {crossModal.staffName}</h3>
-            <p className="muted attendance-modal-sub">Ngày: {date}</p>
+            <p className="muted attendance-modal-sub">Ngày: {formatViDateShort(dateCross)}</p>
 
             <div className="attendance-modal-bookings attendance-modal-bookings--split">
               {/* Cột hóa chất */}
@@ -898,7 +898,12 @@ export function AttendancePage({ data, selectedBranchId }) {
         <CrossBranchPanel
           data={data}
           serviceBranchId={selectedBranchId}
-          date={dateCross}
+          dateCross={dateCross}
+          setDateCross={setDateCross}
+          monthCross={monthCross}
+          setMonthCross={setMonthCross}
+          crossViewType={crossViewType}
+          setCrossViewType={setCrossViewType}
           crossBookings={crossBookings}
           onRefresh={refresh}
         />
@@ -931,7 +936,7 @@ export function AttendancePage({ data, selectedBranchId }) {
             </h3>
             <p className="muted attendance-modal-sub">
               {"Ng\u00e0y: "}
-              {modal.date}
+              {formatViDateShort(modal.date)}
               {" · "}
               {"T\u1ed5ng doanh thu: "}
               <strong>{formatVnd(modalBookingTotal)}</strong>

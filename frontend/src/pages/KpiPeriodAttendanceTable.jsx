@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import {
@@ -7,17 +8,11 @@ import {
   getMondaySundayIsoWeekContaining,
   vietnamTodayIsoDate
 } from "../utils/vietnamTime";
-import { currentMonth, formatCheckinRatePct } from "../utils/format";
+import { currentMonth, formatCheckinRatePct, formatViDateShort } from "../utils/format";
 
 function formatVnd(n) {
   if (!Number.isFinite(n)) return "—";
   return `${n.toLocaleString("vi-VN")} đ`;
-}
-
-/** dd/mm/yyyy từ YYYY-MM-DD */
-function isoToViDate(iso) {
-  const [y, m, d] = iso.split("-");
-  return `${d}/${m}/${y}`;
 }
 
 /**
@@ -174,7 +169,7 @@ export function KpiWeekAttendanceReport({ data, selectedBranchId }) {
       .sort((a, b) => a.name.localeCompare(b.name, "vi"));
   }, [data.staff, selectedBranchId, weekMonday, weekEnd]);
 
-  const rangeLabel = `${isoToViDate(weekMonday)} – ${isoToViDate(weekEnd)}`;
+  const rangeLabel = `${formatViDateShort(weekMonday)} – ${formatViDateShort(weekEnd)}`;
   const periodLabel = `Tổng tuần ${rangeLabel}`;
 
   const staffRowsMain = useMemo(

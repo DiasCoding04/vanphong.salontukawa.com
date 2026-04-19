@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api/client";
 import { addIsoDays, vietnamTodayIsoDate } from "../utils/vietnamTime";
@@ -64,7 +65,7 @@ export function YesterdayReportPanel({ data, selectedBranchId, reportDate, onRep
         items: rows.map((r) => ({
           staffId: r.staffId,
           workStatus: r.workStatus,
-          workPenalty: r.workStatus === "not_reported" ? r.workPenalty : "",
+          workPenalty: ["not_reported", "late_reported"].includes(r.workStatus) ? r.workPenalty : "",
           videoStatus: r.videoStatus,
           videoPenalty: r.videoStatus === "not_posted" ? r.videoPenalty : ""
         }))
@@ -129,11 +130,12 @@ export function YesterdayReportPanel({ data, selectedBranchId, reportDate, onRep
                       onChange={(e) =>
                         updateRow(r.staffId, {
                           workStatus: e.target.value,
-                          workPenalty: e.target.value === "not_reported" ? r.workPenalty : ""
+                          workPenalty: ["not_reported", "late_reported"].includes(e.target.value) ? r.workPenalty : ""
                         })
                       }
                     >
                       <option value="reported">{"\u0110\u00e3 b\u00e1o c\u00e1o"}</option>
+                      <option value="late_reported">{"B\u00e1o c\u00e1o mu\u1ed9n"}</option>
                       <option value="not_reported">{"Kh\u00f4ng b\u00e1o c\u00e1o"}</option>
                     </select>
                   </td>
@@ -143,8 +145,8 @@ export function YesterdayReportPanel({ data, selectedBranchId, reportDate, onRep
                       min={0}
                       className="yesterday-report-penalty"
                       placeholder={"Không phạt"}
-                      disabled={r.workStatus !== "not_reported"}
-                      value={r.workStatus === "not_reported" ? r.workPenalty : ""}
+                      disabled={!["not_reported", "late_reported"].includes(r.workStatus)}
+                      value={["not_reported", "late_reported"].includes(r.workStatus) ? r.workPenalty : ""}
                       onChange={(e) => updateRow(r.staffId, { workPenalty: e.target.value })}
                     />
                   </td>

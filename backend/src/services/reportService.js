@@ -14,10 +14,9 @@ function mergeStaffKpiCfg(person, kpiConfig, staffKpiConfigMap) {
  * Lịch đặt hóa chất, check-in, lịch đặt gội chỉ dùng cho KPI tuần.
  */
 function checksActiveMonth(cfg) {
-  const monthlyRev = Number(cfg.monthlyRevenue);
   return {
-    revenue: Number.isFinite(monthlyRev) && monthlyRev > 0,
-    products: (cfg.monthlyProducts ?? 0) > 0
+    revenue: cfg.monthlyRevenue !== null && cfg.monthlyRevenue !== undefined,
+    products: cfg.monthlyProducts !== null && cfg.monthlyProducts !== undefined
   };
 }
 
@@ -28,9 +27,9 @@ function checksActiveMonth(cfg) {
 function checksActiveWeek(cfg, type) {
   const isAsst = type === "assistant";
   return {
-    bookings: (cfg.weeklyBookings ?? 0) > 0,
-    checkin: (cfg.weeklyCheckinRate ?? 0) > 0,
-    wash: isAsst && (cfg.weeklyWash ?? 0) > 0
+    bookings: cfg.weeklyBookings !== null && cfg.weeklyBookings !== undefined,
+    checkin: cfg.weeklyCheckinRate !== null && cfg.weeklyCheckinRate !== undefined,
+    wash: isAsst && cfg.weeklyWash !== null && cfg.weeklyWash !== undefined
   };
 }
 
@@ -58,13 +57,14 @@ function calculateKpiByStaff(staff, attendanceRows, kpiConfig, staffKpiConfigMap
     const monthlyRevOk = Number.isFinite(monthlyRevTarget) ? monthlyRevTarget : 0;
     const targetProductsMonth = Number(cfg.monthlyProducts ?? 0);
     /** KPI tháng: chỉ doanh thu và sản phẩm (đạt khi thực tế >= ngưỡng). */
+    const checksActive = checksActiveMonth(cfg);
+    const hasActiveKpi = Object.values(checksActive).some(Boolean);
     const checks = {
-      revenue: totalRevenue >= monthlyRevOk,
-      products: totalProducts >= targetProductsMonth
+      revenue: checksActive.revenue ? totalRevenue >= monthlyRevOk : true,
+      products: checksActive.products ? totalProducts >= targetProductsMonth : true
     };
 
-    const checksActive = checksActiveMonth(cfg);
-    const allPass = Object.values(checks).every(Boolean);
+    const allPass = hasActiveKpi && Object.values(checks).every(Boolean);
     const presentDays = rows.length;
     return {
       ...person,
@@ -78,6 +78,7 @@ function calculateKpiByStaff(staff, attendanceRows, kpiConfig, staffKpiConfigMap
       checkinRate,
       checks,
       checksActive,
+      hasActiveKpi,
       allPass
     };
   });
@@ -110,17 +111,18 @@ function calculateKpiWeekByStaff(staff, attendanceRows, kpiConfig, staffKpiConfi
     const targetCheckinWeek = Number(cfg.weeklyCheckinRate ?? 0);
     const targetWashWeek = Number(cfg.weeklyWash ?? 0);
     /** Mọi chỉ tiêu KPI tuần: đạt khi thực tế >= ngưỡng trong cài đặt (kể cả bằng ngưỡng). */
+    const checksActive = checksActiveWeek(cfg, person.type);
+    const hasActiveKpi = Object.values(checksActive).some(Boolean);
     const checks = {
-      bookings: totalBookings >= targetBookingsWeek,
-      checkin: checkinRate >= targetCheckinWeek
+      bookings: checksActive.bookings ? totalBookings >= targetBookingsWeek : true,
+      checkin: checksActive.checkin ? checkinRate >= targetCheckinWeek : true
     };
 
     if (person.type === "assistant") {
-      checks.wash = totalWash >= targetWashWeek;
+      checks.wash = checksActive.wash ? totalWash >= targetWashWeek : true;
     }
 
-    const checksActive = checksActiveWeek(cfg, person.type);
-    const allPass = Object.values(checks).every(Boolean);
+    const allPass = hasActiveKpi && Object.values(checks).every(Boolean);
     const presentDays = rows.length;
     return {
       ...person,
@@ -134,6 +136,7 @@ function calculateKpiWeekByStaff(staff, attendanceRows, kpiConfig, staffKpiConfi
       checkinRate,
       checks,
       checksActive,
+      hasActiveKpi,
       allPass
     };
   });
@@ -160,7 +163,9 @@ function calculateSalaryReport(staff, attendanceRows, kpiRows, adjustments, kpiC
     const workDays = rows.filter((r) => r.present === 1).length;
     const base = Math.round((person.base_salary / daysInMonth) * workDays);
     const kpiResult = kpiMap.get(person.id);
-    const failPenalty = kpiResult?.allPass ? 0 : kpiConfig.penalties.failKpiPenalty;
+    
+    // Nếu đạt (allPass = true), hoặc nếu không có KPI nào được cấu hình (hasActiveKpi = false) thì không phạt.
+    const failPenalty = (kpiResult?.allPass || !kpiResult?.hasActiveKpi) ? 0 : kpiConfig.penalties.failKpiPenalty;
 
     const myAdjustments = adjustments.filter((a) => a.staff_id === person.id);
     const commission = myAdjustments.filter((a) => a.type === "commission").reduce((s, v) => s + v.amount, 0);

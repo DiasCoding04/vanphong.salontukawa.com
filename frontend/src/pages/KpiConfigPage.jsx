@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+/* eslint-disable react-hooks/set-state-in-effect */
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { api } from "../api/client";
 import { vietnamTodayIsoDate } from "../utils/vietnamTime";
 
@@ -105,11 +106,11 @@ export function KpiConfigPage({ data, selectedBranchId }) {
   }, [assistStaffId, cfg, selectedBranchId]);
 
   const updateMainForm = useCallback((key, value) => {
-    setMainForm((prev) => (prev ? { ...prev, [key]: Number(value) } : prev));
+    setMainForm((prev) => (prev ? { ...prev, [key]: value === null ? null : Number(value) } : prev));
   }, []);
 
   const updateAssistForm = useCallback((key, value) => {
-    setAssistForm((prev) => (prev ? { ...prev, [key]: Number(value) } : prev));
+    setAssistForm((prev) => (prev ? { ...prev, [key]: value === null ? null : Number(value) } : prev));
   }, []);
 
   async function handleSaveMainStaff() {
@@ -186,27 +187,49 @@ export function KpiConfigPage({ data, selectedBranchId }) {
                       <tr>
                         <td>Lịch đặt hóa chất</td>
                         <td>
-                          <input
-                            type="number"
-                            min={0}
-                            className="kpi-config-input"
-                            value={mainForm.weeklyBookings ?? 0}
-                            onChange={(e) => updateMainForm("weeklyBookings", e.target.value)}
-                          />
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                            <input
+                              type="checkbox"
+                              checked={mainForm.weeklyBookings !== null && mainForm.weeklyBookings !== undefined}
+                              onChange={(e) => updateMainForm("weeklyBookings", e.target.checked ? 0 : null)}
+                              title="Chạy chỉ tiêu này"
+                            />
+                            {mainForm.weeklyBookings !== null && mainForm.weeklyBookings !== undefined && (
+                              <input
+                                type="number"
+                                min={0}
+                                className="kpi-config-input"
+                                value={mainForm.weeklyBookings}
+                                onChange={(e) => updateMainForm("weeklyBookings", e.target.value)}
+                              />
+                            )}
+                            {(mainForm.weeklyBookings === null || mainForm.weeklyBookings === undefined) && <span className="muted">Chưa chạy</span>}
+                          </div>
                         </td>
                         <td className="muted kpi-config-na">—</td>
                       </tr>
                       <tr>
                         <td>Check-in (%)</td>
                         <td>
-                          <input
-                            type="number"
-                            min={0}
-                            max={100}
-                            className="kpi-config-input"
-                            value={mainForm.weeklyCheckinRate ?? 0}
-                            onChange={(e) => updateMainForm("weeklyCheckinRate", e.target.value)}
-                          />
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                            <input
+                              type="checkbox"
+                              checked={mainForm.weeklyCheckinRate !== null && mainForm.weeklyCheckinRate !== undefined}
+                              onChange={(e) => updateMainForm("weeklyCheckinRate", e.target.checked ? 0 : null)}
+                              title="Chạy chỉ tiêu này"
+                            />
+                            {mainForm.weeklyCheckinRate !== null && mainForm.weeklyCheckinRate !== undefined && (
+                              <input
+                                type="number"
+                                min={0}
+                                max={100}
+                                className="kpi-config-input"
+                                value={mainForm.weeklyCheckinRate}
+                                onChange={(e) => updateMainForm("weeklyCheckinRate", e.target.value)}
+                              />
+                            )}
+                            {(mainForm.weeklyCheckinRate === null || mainForm.weeklyCheckinRate === undefined) && <span className="muted">Chưa chạy</span>}
+                          </div>
                         </td>
                         <td className="muted kpi-config-na">—</td>
                       </tr>
@@ -214,26 +237,48 @@ export function KpiConfigPage({ data, selectedBranchId }) {
                         <td>Doanh thu tháng (đồng)</td>
                         <td className="muted kpi-config-na">—</td>
                         <td>
-                          <input
-                            type="number"
-                            min={0}
-                            className="kpi-config-input"
-                            value={mainForm.monthlyRevenue ?? 0}
-                            onChange={(e) => updateMainForm("monthlyRevenue", e.target.value)}
-                          />
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                            <input
+                              type="checkbox"
+                              checked={mainForm.monthlyRevenue !== null && mainForm.monthlyRevenue !== undefined}
+                              onChange={(e) => updateMainForm("monthlyRevenue", e.target.checked ? 0 : null)}
+                              title="Chạy chỉ tiêu này"
+                            />
+                            {mainForm.monthlyRevenue !== null && mainForm.monthlyRevenue !== undefined && (
+                              <input
+                                type="number"
+                                min={0}
+                                className="kpi-config-input"
+                                value={mainForm.monthlyRevenue}
+                                onChange={(e) => updateMainForm("monthlyRevenue", e.target.value)}
+                              />
+                            )}
+                            {(mainForm.monthlyRevenue === null || mainForm.monthlyRevenue === undefined) && <span className="muted">Chưa chạy</span>}
+                          </div>
                         </td>
                       </tr>
                       <tr>
                         <td>Sản phẩm (tháng)</td>
                         <td className="muted kpi-config-na">—</td>
                         <td>
-                          <input
-                            type="number"
-                            min={0}
-                            className="kpi-config-input"
-                            value={mainForm.monthlyProducts ?? 0}
-                            onChange={(e) => updateMainForm("monthlyProducts", e.target.value)}
-                          />
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                            <input
+                              type="checkbox"
+                              checked={mainForm.monthlyProducts !== null && mainForm.monthlyProducts !== undefined}
+                              onChange={(e) => updateMainForm("monthlyProducts", e.target.checked ? 0 : null)}
+                              title="Chạy chỉ tiêu này"
+                            />
+                            {mainForm.monthlyProducts !== null && mainForm.monthlyProducts !== undefined && (
+                              <input
+                                type="number"
+                                min={0}
+                                className="kpi-config-input"
+                                value={mainForm.monthlyProducts}
+                                onChange={(e) => updateMainForm("monthlyProducts", e.target.value)}
+                              />
+                            )}
+                            {(mainForm.monthlyProducts === null || mainForm.monthlyProducts === undefined) && <span className="muted">Chưa chạy</span>}
+                          </div>
                         </td>
                       </tr>
                     </tbody>
@@ -304,40 +349,73 @@ export function KpiConfigPage({ data, selectedBranchId }) {
                       <tr>
                         <td>Lịch đặt hóa chất</td>
                         <td>
-                          <input
-                            type="number"
-                            min={0}
-                            className="kpi-config-input"
-                            value={assistForm.weeklyBookings ?? 0}
-                            onChange={(e) => updateAssistForm("weeklyBookings", e.target.value)}
-                          />
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                            <input
+                              type="checkbox"
+                              checked={assistForm.weeklyBookings !== null && assistForm.weeklyBookings !== undefined}
+                              onChange={(e) => updateAssistForm("weeklyBookings", e.target.checked ? 0 : null)}
+                              title="Chạy chỉ tiêu này"
+                            />
+                            {assistForm.weeklyBookings !== null && assistForm.weeklyBookings !== undefined && (
+                              <input
+                                type="number"
+                                min={0}
+                                className="kpi-config-input"
+                                value={assistForm.weeklyBookings}
+                                onChange={(e) => updateAssistForm("weeklyBookings", e.target.value)}
+                              />
+                            )}
+                            {(assistForm.weeklyBookings === null || assistForm.weeklyBookings === undefined) && <span className="muted">Chưa chạy</span>}
+                          </div>
                         </td>
                         <td className="muted kpi-config-na">—</td>
                       </tr>
                       <tr>
                         <td>Check-in (%)</td>
                         <td>
-                          <input
-                            type="number"
-                            min={0}
-                            max={100}
-                            className="kpi-config-input"
-                            value={assistForm.weeklyCheckinRate ?? 0}
-                            onChange={(e) => updateAssistForm("weeklyCheckinRate", e.target.value)}
-                          />
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                            <input
+                              type="checkbox"
+                              checked={assistForm.weeklyCheckinRate !== null && assistForm.weeklyCheckinRate !== undefined}
+                              onChange={(e) => updateAssistForm("weeklyCheckinRate", e.target.checked ? 0 : null)}
+                              title="Chạy chỉ tiêu này"
+                            />
+                            {assistForm.weeklyCheckinRate !== null && assistForm.weeklyCheckinRate !== undefined && (
+                              <input
+                                type="number"
+                                min={0}
+                                max={100}
+                                className="kpi-config-input"
+                                value={assistForm.weeklyCheckinRate}
+                                onChange={(e) => updateAssistForm("weeklyCheckinRate", e.target.value)}
+                              />
+                            )}
+                            {(assistForm.weeklyCheckinRate === null || assistForm.weeklyCheckinRate === undefined) && <span className="muted">Chưa chạy</span>}
+                          </div>
                         </td>
                         <td className="muted kpi-config-na">—</td>
                       </tr>
                       <tr>
                         <td>Lịch đặt gội</td>
                         <td>
-                          <input
-                            type="number"
-                            min={0}
-                            className="kpi-config-input"
-                            value={assistForm.weeklyWash ?? 0}
-                            onChange={(e) => updateAssistForm("weeklyWash", e.target.value)}
-                          />
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                            <input
+                              type="checkbox"
+                              checked={assistForm.weeklyWash !== null && assistForm.weeklyWash !== undefined}
+                              onChange={(e) => updateAssistForm("weeklyWash", e.target.checked ? 0 : null)}
+                              title="Chạy chỉ tiêu này"
+                            />
+                            {assistForm.weeklyWash !== null && assistForm.weeklyWash !== undefined && (
+                              <input
+                                type="number"
+                                min={0}
+                                className="kpi-config-input"
+                                value={assistForm.weeklyWash}
+                                onChange={(e) => updateAssistForm("weeklyWash", e.target.value)}
+                              />
+                            )}
+                            {(assistForm.weeklyWash === null || assistForm.weeklyWash === undefined) && <span className="muted">Chưa chạy</span>}
+                          </div>
                         </td>
                         <td className="muted kpi-config-na">—</td>
                       </tr>
@@ -345,26 +423,48 @@ export function KpiConfigPage({ data, selectedBranchId }) {
                         <td>Doanh thu tháng (đồng)</td>
                         <td className="muted kpi-config-na">—</td>
                         <td>
-                          <input
-                            type="number"
-                            min={0}
-                            className="kpi-config-input"
-                            value={assistForm.monthlyRevenue ?? 0}
-                            onChange={(e) => updateAssistForm("monthlyRevenue", e.target.value)}
-                          />
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                            <input
+                              type="checkbox"
+                              checked={assistForm.monthlyRevenue !== null && assistForm.monthlyRevenue !== undefined}
+                              onChange={(e) => updateAssistForm("monthlyRevenue", e.target.checked ? 0 : null)}
+                              title="Chạy chỉ tiêu này"
+                            />
+                            {assistForm.monthlyRevenue !== null && assistForm.monthlyRevenue !== undefined && (
+                              <input
+                                type="number"
+                                min={0}
+                                className="kpi-config-input"
+                                value={assistForm.monthlyRevenue}
+                                onChange={(e) => updateAssistForm("monthlyRevenue", e.target.value)}
+                              />
+                            )}
+                            {(assistForm.monthlyRevenue === null || assistForm.monthlyRevenue === undefined) && <span className="muted">Chưa chạy</span>}
+                          </div>
                         </td>
                       </tr>
                       <tr>
                         <td>Sản phẩm (tháng)</td>
                         <td className="muted kpi-config-na">—</td>
                         <td>
-                          <input
-                            type="number"
-                            min={0}
-                            className="kpi-config-input"
-                            value={assistForm.monthlyProducts ?? 0}
-                            onChange={(e) => updateAssistForm("monthlyProducts", e.target.value)}
-                          />
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                            <input
+                              type="checkbox"
+                              checked={assistForm.monthlyProducts !== null && assistForm.monthlyProducts !== undefined}
+                              onChange={(e) => updateAssistForm("monthlyProducts", e.target.checked ? 0 : null)}
+                              title="Chạy chỉ tiêu này"
+                            />
+                            {assistForm.monthlyProducts !== null && assistForm.monthlyProducts !== undefined && (
+                              <input
+                                type="number"
+                                min={0}
+                                className="kpi-config-input"
+                                value={assistForm.monthlyProducts}
+                                onChange={(e) => updateAssistForm("monthlyProducts", e.target.value)}
+                              />
+                            )}
+                            {(assistForm.monthlyProducts === null || assistForm.monthlyProducts === undefined) && <span className="muted">Chưa chạy</span>}
+                          </div>
                         </td>
                       </tr>
                     </tbody>
