@@ -68,6 +68,7 @@ export const api = {
     ),
   saveAttendance: (payload) => request("/attendance", { method: "PUT", body: JSON.stringify(payload) }),
   getKpiReport: (month, branchId) => request(`/reports/kpi?month=${month}${branchId ? `&branchId=${branchId}` : ""}`),
+  getDashboardStats: (month) => request(`/reports/dashboard?month=${month}`),
   getKpiWeekReport: (from, to, branchId) =>
     request(
       `/reports/kpi-week?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}${
@@ -77,6 +78,8 @@ export const api = {
   getSalaryReport: (month, branchId) => request(`/reports/salary?month=${month}${branchId ? `&branchId=${branchId}` : ""}`),
   applyMonthlyHoldDeductions: (payload) => request("/hold-deductions/apply-month", { method: "POST", body: JSON.stringify(payload) }),
   addSalaryAdjustment: (payload) => request("/salary-adjustments", { method: "POST", body: JSON.stringify(payload) }),
+  updateSalaryAdjustment: (id, payload) => request(`/salary-adjustments/${id}`, { method: "PUT", body: JSON.stringify(payload) }),
+  deleteSalaryAdjustment: (id) => request(`/salary-adjustments/${id}`, { method: "DELETE" }),
   getSalaryAdjustments: (params = {}) => {
     const q = new URLSearchParams();
     if (params.month) q.set("month", params.month);

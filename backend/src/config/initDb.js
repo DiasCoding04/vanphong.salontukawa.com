@@ -21,8 +21,6 @@ const defaultKpiConfig = {
     monthlyRevenue: 10000000,
     monthlyProducts: 0
   },
-  rewards: { allPassBonus: 500000, passRate80Bonus: 200000 },
-  penalties: { failKpiPenalty: 200000 },
   chemicalMinVnd: 450000,
   washDoubleCountFromVnd: 350000,
   monthlyHoldRate: 0.15
@@ -224,13 +222,48 @@ async function initDb() {
     service_branch_id INTEGER NOT NULL,
     staff_id INTEGER NOT NULL,
     date TEXT NOT NULL,
-    type TEXT NOT NULL CHECK(type IN ('chemical', 'wash')),
+    type TEXT NOT NULL CHECK(type IN ('chemical', 'wash', 'product')),
     revenue INTEGER NOT NULL,
     note TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(service_branch_id) REFERENCES branches(id),
     FOREIGN KEY(staff_id) REFERENCES staff(id)
   )`);
+
+  // Migration for cross_branch_bookings type CHECK constraint
+  const cbTableInfo = await all(`PRAGMA table_info('cross_branch_bookings')`);
+  if (cbTableInfo.length > 0) {
+    const typeCol = cbTableInfo.find(c => c.name === 'type');
+    // SQLite doesn't easily show the CHECK constraint in table_info. 
+    // We can check the SQL used to create the table.
+    const createSqlRow = await get(`SELECT sql FROM sqlite_master WHERE type='table' AND name='cross_branch_bookings'`);
+    if (createSqlRow && createSqlRow.sql && !createSqlRow.sql.includes("'product'")) {
+      console.log("Migrating cross_branch_bookings to support 'product' type...");
+      await run("BEGIN TRANSACTION");
+      try {
+        await run("ALTER TABLE cross_branch_bookings RENAME TO cross_branch_bookings_old");
+        await run(`CREATE TABLE cross_branch_bookings (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          service_branch_id INTEGER NOT NULL,
+          staff_id INTEGER NOT NULL,
+          date TEXT NOT NULL,
+          type TEXT NOT NULL CHECK(type IN ('chemical', 'wash', 'product')),
+          revenue INTEGER NOT NULL,
+          note TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY(service_branch_id) REFERENCES branches(id),
+          FOREIGN KEY(staff_id) REFERENCES staff(id)
+        )`);
+        await run(`INSERT INTO cross_branch_bookings (id, service_branch_id, staff_id, date, type, revenue, note, created_at)
+                   SELECT id, service_branch_id, staff_id, date, type, revenue, note, created_at FROM cross_branch_bookings_old`);
+        await run("DROP TABLE cross_branch_bookings_old");
+        await run("COMMIT");
+      } catch (err) {
+        await run("ROLLBACK");
+        console.error("Migration for cross_branch_bookings failed:", err);
+      }
+    }
+  }
 
   const hasKpi = await get("SELECT COUNT(*) AS total FROM kpi_config");
   if (hasKpi.total === 0) {

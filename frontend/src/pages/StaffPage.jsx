@@ -97,10 +97,17 @@ export function StaffPage({ data, selectedBranchId }) {
   }
 
   async function handleDelete(staff) {
-    if (!confirm(`X\u00f3a nh\u00e2n vi\u00ean ${staff.name}?`)) return;
-    await api.deleteStaff(staff.id);
-    await data.reload();
-    if (form.id === staff.id) resetForm();
+    const confirmMessage = `CẢNH BÁO NGUY HIỂM!\n\nBạn đang yêu cầu xóa vĩnh viễn nhân viên: ${staff.name}.\n\nHành động này sẽ XÓA TOÀN BỘ dữ liệu liên quan bao gồm:\n- Lịch sử chấm công\n- Lịch sử phạt và thưởng lương\n- Các báo cáo công việc và video\n- Cài đặt KPI và thông tin cá nhân\n\nBạn có chắc chắn muốn xóa sạch toàn bộ dữ liệu này không? Hành động này không thể hoàn tác.`;
+    
+    if (!confirm(confirmMessage)) return;
+    
+    try {
+      await api.deleteStaff(staff.id);
+      await data.reload();
+      if (form.id === staff.id) resetForm();
+    } catch (e) {
+      alert(e.message || "Đã có lỗi xảy ra khi xóa dữ liệu.");
+    }
   }
 
   function renderStaffTable(title, rows, showEndDate) {

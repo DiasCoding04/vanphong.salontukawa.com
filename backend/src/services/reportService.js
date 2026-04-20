@@ -4,7 +4,9 @@ function mergeStaffKpiCfg(person, kpiConfig, staffKpiConfigMap) {
   if (!ov) return base;
   const merged = { ...base };
   for (const [k, v] of Object.entries(ov)) {
-    if (v !== null && v !== undefined) merged[k] = v;
+    // Nếu v là null, có nghĩa là tiêu chí này bị tắt riêng cho nhân viên này.
+    // Chúng ta cho phép null ghi đè giá trị mặc định để checksActive hoạt động đúng.
+    if (v !== undefined) merged[k] = v;
   }
   return merged;
 }
@@ -64,7 +66,6 @@ function calculateKpiByStaff(staff, attendanceRows, kpiConfig, staffKpiConfigMap
       products: checksActive.products ? totalProducts >= targetProductsMonth : true
     };
 
-    const allPass = hasActiveKpi && Object.values(checks).every(Boolean);
     const presentDays = rows.length;
     return {
       ...person,
@@ -78,8 +79,7 @@ function calculateKpiByStaff(staff, attendanceRows, kpiConfig, staffKpiConfigMap
       checkinRate,
       checks,
       checksActive,
-      hasActiveKpi,
-      allPass
+      hasActiveKpi
     };
   });
 }
@@ -122,7 +122,6 @@ function calculateKpiWeekByStaff(staff, attendanceRows, kpiConfig, staffKpiConfi
       checks.wash = checksActive.wash ? totalWash >= targetWashWeek : true;
     }
 
-    const allPass = hasActiveKpi && Object.values(checks).every(Boolean);
     const presentDays = rows.length;
     return {
       ...person,
@@ -136,8 +135,7 @@ function calculateKpiWeekByStaff(staff, attendanceRows, kpiConfig, staffKpiConfi
       checkinRate,
       checks,
       checksActive,
-      hasActiveKpi,
-      allPass
+      hasActiveKpi
     };
   });
 }
@@ -151,6 +149,31 @@ function calculateSalaryReport(staff, attendanceRows, kpiRows, adjustments, kpiC
 
   const kpiMap = new Map(kpiRows.map((item) => [item.id, item]));
 
+  // Tính toán thưởng/phạt KPI tháng (300k/tiêu chí)
+  const penaltyRate = 300000;
+  
+  // Tính quỹ phạt cho từng nhóm
+  const getKpiList = (type, criterion, isPass) => 
+    kpiRows.filter(s => s.type === type && s.checksActive?.[criterion] && s.checks?.[criterion] === isPass);
+
+  // --- THỢ CHÍNH ---
+  const mainRevFailed = getKpiList("main", "revenue", false);
+  const mainRevPassed = getKpiList("main", "revenue", true);
+  const mainProdFailed = getKpiList("main", "products", false);
+  const mainProdPassed = getKpiList("main", "products", true);
+
+  const mainRevReward = mainRevPassed.length > 0 ? Math.floor((mainRevFailed.length * penaltyRate) / mainRevPassed.length) : 0;
+  const mainProdReward = mainProdPassed.length > 0 ? Math.floor((mainProdFailed.length * penaltyRate) / mainProdPassed.length) : 0;
+
+  // --- THỢ PHỤ ---
+  const asstRevFailed = getKpiList("assistant", "revenue", false);
+  const asstRevPassed = getKpiList("assistant", "revenue", true);
+  const asstProdFailed = getKpiList("assistant", "products", false);
+  const asstProdPassed = getKpiList("assistant", "products", true);
+
+  const asstRevReward = asstRevPassed.length > 0 ? Math.floor((asstRevFailed.length * penaltyRate) / asstRevPassed.length) : 0;
+  const asstProdReward = asstProdPassed.length > 0 ? Math.floor((asstProdFailed.length * penaltyRate) / asstProdPassed.length) : 0;
+
   // Tính số ngày trong tháng (mặc định 30 nếu không có month)
   let daysInMonth = 30;
   if (month && month.includes("-")) {
@@ -162,16 +185,35 @@ function calculateSalaryReport(staff, attendanceRows, kpiRows, adjustments, kpiC
     const rows = attendanceMap.get(person.id) || [];
     const workDays = rows.filter((r) => r.present === 1).length;
     const base = Math.round((person.base_salary / daysInMonth) * workDays);
-    const kpiResult = kpiMap.get(person.id);
     
-    // Nếu đạt (allPass = true), hoặc nếu không có KPI nào được cấu hình (hasActiveKpi = false) thì không phạt.
-    const failPenalty = (kpiResult?.allPass || !kpiResult?.hasActiveKpi) ? 0 : kpiConfig.penalties.failKpiPenalty;
-
     const myAdjustments = adjustments.filter((a) => a.staff_id === person.id);
     const commission = myAdjustments.filter((a) => a.type === "commission").reduce((s, v) => s + v.amount, 0);
     const booking8 = myAdjustments.filter((a) => a.type === "booking8").reduce((s, v) => s + v.amount, 0);
-    const kpiBonus = myAdjustments.filter((a) => a.type === "kpibonus").reduce((s, v) => s + v.amount, 0);
+    const manualKpiBonus = myAdjustments.filter((a) => a.type === "kpibonus").reduce((s, v) => s + v.amount, 0);
     const penalties = myAdjustments.filter((a) => a.type === "penalty").reduce((s, v) => s + v.amount, 0);
+
+    // Tính thưởng/phạt KPI tháng tự động cho nhân viên này
+    const kpiData = kpiMap.get(person.id);
+    let autoKpiPenalty = 0;
+    let autoKpiBonus = 0;
+
+    if (kpiData) {
+      // Phạt nếu không đạt
+      if (kpiData.checksActive.revenue && !kpiData.checks.revenue) autoKpiPenalty += penaltyRate;
+      if (kpiData.checksActive.products && !kpiData.checks.products) autoKpiPenalty += penaltyRate;
+
+      // Thưởng nếu đạt (từ quỹ phạt của nhóm)
+      if (person.type === "main") {
+        if (kpiData.checksActive.revenue && kpiData.checks.revenue) autoKpiBonus += mainRevReward;
+        if (kpiData.checksActive.products && kpiData.checks.products) autoKpiBonus += mainProdReward;
+      } else {
+        if (kpiData.checksActive.revenue && kpiData.checks.revenue) autoKpiBonus += asstRevReward;
+        if (kpiData.checksActive.products && kpiData.checks.products) autoKpiBonus += asstProdReward;
+      }
+    }
+
+    const kpiBonus = manualKpiBonus + autoKpiBonus;
+    const failPenalty = autoKpiPenalty;
 
     const salaryBeforeHold = base + commission + booking8 + kpiBonus - failPenalty - penalties;
     const holdRate = kpiConfig.monthlyHoldRate ?? 0.15;

@@ -4,16 +4,22 @@ import { api } from "../api/client";
 import { currentMonth, fmtMoney } from "../utils/format";
 
 export function SalaryPage({ selectedBranchId }) {
+  const [tab, setTab] = useState("calculate");
   const [month, setMonth] = useState(currentMonth());
   const [rows, setRows] = useState([]);
   const [selected, setSelected] = useState(null);
   const [commission, setCommission] = useState(0);
   const [isApplyingHold, setIsApplyingHold] = useState(false);
   const [penaltyHistory, setPenaltyHistory] = useState(null);
+  const [reportStaffId, setReportStaffId] = useState("");
 
   const load = useCallback(async () => {
-    setRows(await api.getSalaryReport(month, selectedBranchId));
-  }, [month, selectedBranchId]);
+    const data = await api.getSalaryReport(month, selectedBranchId);
+    setRows(data);
+    if (data.length > 0 && !reportStaffId) {
+      setReportStaffId(data[0].id);
+    }
+  }, [month, selectedBranchId, reportStaffId]);
 
   async function openPenaltyHistory(r) {
     try {
@@ -73,39 +79,146 @@ export function SalaryPage({ selectedBranchId }) {
     );
   }
 
-  return (
-    <div>
-      <div className="card" style={{ marginBottom: 24 }}>
-        <div className="row">
-          <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
-          <button
-            className="secondary"
-            disabled={isApplyingHold}
-            onClick={async () => {
-              setIsApplyingHold(true);
-              try {
-                await api.applyMonthlyHoldDeductions({ month, branchId: selectedBranchId });
-                await load();
-              } finally {
-                setIsApplyingHold(false);
-              }
-            }}
-          >
-            {isApplyingHold ? "\u0110ang ch\u1ed1t..." : "Ch\u1ed1t tr\u1eeb giam l\u01b0\u01a1ng th\u00e1ng"}
-          </button>
-          <strong>{"T\u1ed5ng qu\u1ef9 l\u01b0\u01a1ng: "}{fmtMoney(total)}</strong>
+  function renderVerticalReport() {
+    const r = rows.find(item => Number(item.id) === Number(reportStaffId));
+    if (!r) return <p className="muted">Vui lòng chọn nhân viên.</p>;
+
+    return (
+      <div className="salary-report-vertical-wrap" style={{ maxWidth: 500, margin: "0 auto" }}>
+        <div className="card salary-report-vertical-card" style={{ padding: "30px 40px" }}>
+          <div style={{ textAlign: "center", marginBottom: 25 }}>
+            <h2 style={{ margin: "0 0 5px" }}>BÁO CÁO LƯƠNG</h2>
+            <p className="muted" style={{ fontSize: 16 }}>Tháng {month} — {r.name}</p>
+          </div>
+
+          <div className="salary-vertical-list">
+            <div className="salary-vertical-item">
+              <span className="label">Họ và tên:</span>
+              <span className="value"><strong>{r.name}</strong></span>
+            </div>
+            <div className="salary-vertical-item">
+              <span className="label">Ngày công:</span>
+              <span className="value">{r.workDays} ngày</span>
+            </div>
+            <div className="salary-vertical-divider"></div>
+            
+            <div className="salary-vertical-item">
+              <span className="label">Lương cứng:</span>
+              <span className="value">{fmtMoney(r.base)}</span>
+            </div>
+            <div className="salary-vertical-item">
+              <span className="label">Hoa hồng / Commission:</span>
+              <span className="value">{fmtMoney(r.commission)}</span>
+            </div>
+            <div className="salary-vertical-item">
+              <span className="label">Thưởng KPI:</span>
+              <span className="value">{fmtMoney(r.kpiBonus)}</span>
+            </div>
+            
+            <div className="salary-vertical-item penalty">
+              <span className="label">Phạt KPI:</span>
+              <span className="value">{r.failPenalty > 0 ? `-${fmtMoney(r.failPenalty)}` : "-"}</span>
+            </div>
+            <div className="salary-vertical-item penalty">
+              <span className="label">Phạt phát sinh:</span>
+              <span className="value">{r.penalties > 0 ? `-${fmtMoney(r.penalties)}` : "-"}</span>
+            </div>
+            <div className="salary-vertical-item penalty">
+              <span className="label">Trừ giam lương (15%):</span>
+              <span className="value">{r.holdDeduction > 0 ? `-${fmtMoney(r.holdDeduction)}` : "-"}</span>
+            </div>
+
+            <div className="salary-vertical-divider"></div>
+            <div className="salary-vertical-item total">
+              <span className="label">TỔNG LƯƠNG THỰC NHẬN:</span>
+              <span className="value"><strong>{fmtMoney(r.total)}</strong></span>
+            </div>
+            
+            <div style={{ marginTop: 15, fontSize: 13 }} className="muted">
+              <p style={{ margin: "5px 0" }}>* Giam lương còn lại: {r.holdRemainingAfter > 0 ? fmtMoney(r.holdRemainingAfter) : "Đã giam đủ"}</p>
+            </div>
+          </div>
         </div>
       </div>
-      
-      {rows.length === 0 ? (
-        <div className="card">
-          <p className="muted">Không có dữ liệu nhân viên cho tháng này.</p>
+    );
+  }
+
+  return (
+    <div>
+      <div className="card attendance-tabs-card" style={{ marginBottom: 16 }}>
+        <div className="attendance-page-tabs">
+          <button
+            type="button"
+            className={tab === "calculate" ? "attendance-tab active" : "attendance-tab"}
+            onClick={() => setTab("calculate")}
+          >
+            Tính lương
+          </button>
+          <button
+            type="button"
+            className={tab === "report" ? "attendance-tab active" : "attendance-tab"}
+            onClick={() => setTab("report")}
+          >
+            Chụp báo cáo lương
+          </button>
         </div>
-      ) : (
+      </div>
+
+      {tab === "calculate" ? (
         <>
-          {renderTable("Thợ chính", mainStaffRows)}
-          {renderTable("Thợ phụ", assistantStaffRows)}
+          <div className="card" style={{ marginBottom: 24 }}>
+            <div className="row">
+              <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
+              <button
+                className="secondary"
+                disabled={isApplyingHold}
+                onClick={async () => {
+                  setIsApplyingHold(true);
+                  try {
+                    await api.applyMonthlyHoldDeductions({ month, branchId: selectedBranchId });
+                    await load();
+                  } finally {
+                    setIsApplyingHold(false);
+                  }
+                }}
+              >
+                {isApplyingHold ? "Đang chốt..." : "Chốt trừ giam lương tháng"}
+              </button>
+              <strong>{"Tổng quỹ lương: "}{fmtMoney(total)}</strong>
+            </div>
+          </div>
+          
+          {rows.length === 0 ? (
+            <div className="card">
+              <p className="muted">Không có dữ liệu nhân viên cho tháng này.</p>
+            </div>
+          ) : (
+            <>
+              {renderTable("Thợ chính", mainStaffRows)}
+              {renderTable("Thợ phụ", assistantStaffRows)}
+            </>
+          )}
         </>
+      ) : (
+        <div className="salary-report-tab-content">
+          <div className="card" style={{ marginBottom: 20 }}>
+            <div className="row" style={{ alignItems: "center", gap: 15 }}>
+              <div className="field" style={{ marginBottom: 0 }}>
+                <label className="muted" style={{ marginRight: 8 }}>Tháng:</label>
+                <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
+              </div>
+              <div className="field" style={{ marginBottom: 0, flex: 1 }}>
+                <label className="muted" style={{ marginRight: 8 }}>Chọn nhân viên:</label>
+                <select value={reportStaffId} onChange={(e) => setReportStaffId(e.target.value)}>
+                  {rows.map(r => (
+                    <option key={r.id} value={r.id}>{r.name} ({r.type === 'main' ? 'Thợ chính' : 'Thợ phụ'})</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+          {renderVerticalReport()}
+        </div>
       )}
 
       {penaltyHistory && (

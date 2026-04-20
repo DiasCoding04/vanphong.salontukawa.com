@@ -1,7 +1,7 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { api } from "../api/client";
-import { vietnamTodayIsoDate } from "../utils/vietnamTime";
+import { vietnamTodayIsoDate, addIsoDays } from "../utils/vietnamTime";
 
 function cloneMain(cfg) {
   return JSON.parse(JSON.stringify(cfg.main));
@@ -14,15 +14,21 @@ function cloneAssistant(cfg) {
 export function KpiConfigPage({ data, selectedBranchId }) {
   const [cfg, setCfg] = useState(null);
 
+  const [mainKpiId, setMainKpiId] = useState(null);
   const [mainStaffId, setMainStaffId] = useState("");
   const [mainStart, setMainStart] = useState("");
   const [mainEnd, setMainEnd] = useState("");
   const [mainForm, setMainForm] = useState(null);
+  const [loadingMain, setLoadingMain] = useState(false);
+  const [mainNotice, setMainNotice] = useState("");
 
+  const [assistKpiId, setAssistKpiId] = useState(null);
   const [assistStaffId, setAssistStaffId] = useState("");
   const [assistStart, setAssistStart] = useState("");
   const [assistEnd, setAssistEnd] = useState("");
   const [assistForm, setAssistForm] = useState(null);
+  const [loadingAssist, setLoadingAssist] = useState(false);
+  const [assistNotice, setAssistNotice] = useState("");
 
   const mainStaffList = useMemo(() => {
     if (selectedBranchId == null || selectedBranchId === "") return [];
@@ -60,17 +66,33 @@ export function KpiConfigPage({ data, selectedBranchId }) {
       setMainForm(cloneMain(cfg));
       setMainStart(vietnamTodayIsoDate());
       setMainEnd("");
+      setMainKpiId(null);
+      setLoadingMain(false);
+      setMainNotice("");
       return;
     }
     let cancelled = false;
-    setMainForm(null);
-    setMainStart("");
-    setMainEnd("");
+    setLoadingMain(true);
+    setMainNotice("");
     api.getStaffKpiSetting(mainStaffId).then((setting) => {
       if (cancelled) return;
-      setMainStart(setting?.startDate || vietnamTodayIsoDate());
-      setMainEnd(setting?.endDate || "");
-      setMainForm(setting?.config || cloneMain(cfg));
+      if (setting?.endDate) {
+        // Có ngày kết thúc => Coi như chưa có KPI mới
+        setMainKpiId(null);
+        setMainStart(addIsoDays(setting.endDate, 1));
+        setMainEnd("");
+        setMainForm(setting.config || cloneMain(cfg));
+        setMainNotice(`Bản ghi KPI gần nhất đã kết thúc vào ${setting.endDate}. Hãy thiết lập bản ghi mới bắt đầu sau ngày này.`);
+      } else {
+        setMainKpiId(setting?.id || null);
+        setMainStart(setting?.startDate || vietnamTodayIsoDate());
+        setMainEnd(setting?.endDate || "");
+        setMainForm(setting?.config || cloneMain(cfg));
+        setMainNotice("");
+      }
+      setLoadingMain(false);
+    }).catch(() => {
+      if (!cancelled) setLoadingMain(false);
     });
     return () => {
       cancelled = true;
@@ -82,23 +104,40 @@ export function KpiConfigPage({ data, selectedBranchId }) {
       setAssistForm(null);
       setAssistStart("");
       setAssistEnd("");
+      setLoadingAssist(false);
       return;
     }
     if (!assistStaffId) {
       setAssistForm(cloneAssistant(cfg));
       setAssistStart(vietnamTodayIsoDate());
       setAssistEnd("");
+      setAssistKpiId(null);
+      setLoadingAssist(false);
+      setAssistNotice("");
       return;
     }
     let cancelled = false;
-    setAssistForm(null);
-    setAssistStart("");
-    setAssistEnd("");
+    setLoadingAssist(true);
+    setAssistNotice("");
     api.getStaffKpiSetting(assistStaffId).then((setting) => {
       if (cancelled) return;
-      setAssistStart(setting?.startDate || vietnamTodayIsoDate());
-      setAssistEnd(setting?.endDate || "");
-      setAssistForm(setting?.config || cloneAssistant(cfg));
+      if (setting?.endDate) {
+        // Có ngày kết thúc => Coi như chưa có KPI mới
+        setAssistKpiId(null);
+        setAssistStart(addIsoDays(setting.endDate, 1));
+        setAssistEnd("");
+        setAssistForm(setting.config || cloneAssistant(cfg));
+        setAssistNotice(`Bản ghi KPI gần nhất đã kết thúc vào ${setting.endDate}. Hãy thiết lập bản ghi mới bắt đầu sau ngày này.`);
+      } else {
+        setAssistKpiId(setting?.id || null);
+        setAssistStart(setting?.startDate || vietnamTodayIsoDate());
+        setAssistEnd(setting?.endDate || "");
+        setAssistForm(setting?.config || cloneAssistant(cfg));
+        setAssistNotice("");
+      }
+      setLoadingAssist(false);
+    }).catch(() => {
+      if (!cancelled) setLoadingAssist(false);
     });
     return () => {
       cancelled = true;
@@ -114,25 +153,45 @@ export function KpiConfigPage({ data, selectedBranchId }) {
   }, []);
 
   async function handleSaveMainStaff() {
-    if (!mainStaffId || !mainForm || !mainStart) return;
-    await api.saveStaffKpiSetting({
-      staffId: Number(mainStaffId),
-      startDate: mainStart,
-      endDate: mainEnd || null,
-      config: mainForm
-    });
-    alert("Đã lưu KPI cho thợ chính đã chọn.");
+    if (!mainStaffId || !mainForm || !mainStart) {
+      alert("Vui lòng điền đầy đủ thông tin (Nhân viên, Ngày bắt đầu).");
+      return;
+    }
+    try {
+      const res = await api.saveStaffKpiSetting({
+        id: mainKpiId,
+        staffId: Number(mainStaffId),
+        startDate: mainStart,
+        endDate: mainEnd || null,
+        config: mainForm
+      });
+      setMainKpiId(res.id);
+      alert("Đã lưu KPI cho thợ chính đã chọn thành công!");
+    } catch (err) {
+      console.error(err);
+      alert("Lỗi khi lưu KPI: " + err.message);
+    }
   }
 
   async function handleSaveAssistStaff() {
-    if (!assistStaffId || !assistForm || !assistStart) return;
-    await api.saveStaffKpiSetting({
-      staffId: Number(assistStaffId),
-      startDate: assistStart,
-      endDate: assistEnd || null,
-      config: assistForm
-    });
-    alert("Đã lưu KPI cho thợ phụ đã chọn.");
+    if (!assistStaffId || !assistForm || !assistStart) {
+      alert("Vui lòng điền đầy đủ thông tin (Nhân viên, Ngày bắt đầu).");
+      return;
+    }
+    try {
+      const res = await api.saveStaffKpiSetting({
+        id: assistKpiId,
+        staffId: Number(assistStaffId),
+        startDate: assistStart,
+        endDate: assistEnd || null,
+        config: assistForm
+      });
+      setAssistKpiId(res.id);
+      alert("Đã lưu KPI cho thợ phụ đã chọn thành công!");
+    } catch (err) {
+      console.error(err);
+      alert("Lỗi khi lưu KPI: " + err.message);
+    }
   }
 
   const canSaveMain = Boolean(selectedBranchId && mainStaffId && mainForm && mainStart);
@@ -165,6 +224,11 @@ export function KpiConfigPage({ data, selectedBranchId }) {
             </div>
             {mainStaffList.length === 0 && (
               <p className="muted">Không có thợ chính đang làm ở chi nhánh này.</p>
+            )}
+            {mainNotice && (
+              <div className="card-notice warning" style={{ marginBottom: 12, padding: "8px 12px", background: "rgba(245, 158, 11, 0.1)", borderLeft: "4px solid #f59e0b", borderRadius: 4 }}>
+                <span style={{ color: "#f59e0b", fontSize: 14 }}>⚠️ {mainNotice}</span>
+              </div>
             )}
             {mainForm && (
               <>
@@ -288,14 +352,14 @@ export function KpiConfigPage({ data, selectedBranchId }) {
                   type="button"
                   className="primary"
                   style={{ marginTop: 12 }}
-                  disabled={!canSaveMain}
+                  disabled={!canSaveMain || loadingMain}
                   onClick={handleSaveMainStaff}
                 >
-                  Lưu KPI cho nhân viên đã chọn
+                  {loadingMain ? "Đang tải..." : "Lưu KPI cho nhân viên đã chọn"}
                 </button>
               </>
             )}
-            {selectedBranchId && cfg && !mainForm && mainStaffId && (
+            {selectedBranchId && cfg && loadingMain && (
               <p className="muted">Đang tải KPI nhân viên…</p>
             )}
           </>
@@ -327,6 +391,11 @@ export function KpiConfigPage({ data, selectedBranchId }) {
             </div>
             {assistStaffList.length === 0 && (
               <p className="muted">Không có thợ phụ đang làm ở chi nhánh này.</p>
+            )}
+            {assistNotice && (
+              <div className="card-notice warning" style={{ marginBottom: 12, padding: "8px 12px", background: "rgba(245, 158, 11, 0.1)", borderLeft: "4px solid #f59e0b", borderRadius: 4 }}>
+                <span style={{ color: "#f59e0b", fontSize: 14 }}>⚠️ {assistNotice}</span>
+              </div>
             )}
             {assistForm && (
               <>
@@ -474,14 +543,14 @@ export function KpiConfigPage({ data, selectedBranchId }) {
                   type="button"
                   className="primary"
                   style={{ marginTop: 12 }}
-                  disabled={!canSaveAssist}
+                  disabled={!canSaveAssist || loadingAssist}
                   onClick={handleSaveAssistStaff}
                 >
-                  Lưu KPI cho nhân viên đã chọn
+                  {loadingAssist ? "Đang tải..." : "Lưu KPI cho nhân viên đã chọn"}
                 </button>
               </>
             )}
-            {selectedBranchId && cfg && !assistForm && assistStaffId && (
+            {selectedBranchId && cfg && loadingAssist && (
               <p className="muted">Đang tải KPI nhân viên…</p>
             )}
           </>

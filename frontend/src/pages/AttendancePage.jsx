@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import { addIsoDays, vietnamTodayIsoDate } from "../utils/vietnamTime";
-import { formatCheckinRatePct, formatViDateShort } from "../utils/format";
+import { formatCheckinRatePct, formatViDateShort, fmtMoney } from "../utils/format";
 import { YesterdayReportPanel } from "./YesterdayReportPage";
 
 function formatVnd(n) {
@@ -10,10 +10,11 @@ function formatVnd(n) {
 }
 
 function formatAttendanceStatus(row) {
-  if (!row) return "Chưa chấm";
-  if (row.present !== 1) return "Vắng";
-  if (row.late_minutes != null && row.late_minutes !== "") return `Đi muộn (${row.late_minutes} phút)`;
-  return "Có mặt";
+  if (!row) return <span className="badge">Chưa chấm</span>;
+  if (row.present !== 1) return <span className="badge badge-red">Vắng</span>;
+  if (row.late_minutes != null && row.late_minutes !== "")
+    return <span className="badge badge-yellow">Đi muộn ({row.late_minutes} ph)</span>;
+  return <span className="badge badge-green">Có mặt</span>;
 }
 
 /** absent | late | present — dùng cho tab Chấm công; lưu KPI chỉ gửi present/late (không gửi absent). */
@@ -85,7 +86,8 @@ function CrossBranchPanel({
       staffName: staff.name,
       staffType: staff.type,
       chemicalLines: [],
-      washLines: []
+      washLines: [],
+      productLines: []
     });
   }
 
@@ -106,7 +108,12 @@ function CrossBranchPanel({
       note: l.note
     })).filter(l => l.revenue > 0);
 
-    if (chemicalPayload.length === 0 && washPayload.length === 0) {
+    const productPayload = crossModal.productLines.map(l => ({
+      revenue: Math.round(Number(String(l.revenue).replace(/\s/g, ""))),
+      note: l.note
+    })).filter(l => l.revenue > 0);
+
+    if (chemicalPayload.length === 0 && washPayload.length === 0 && productPayload.length === 0) {
       alert("Vui lòng thêm ít nhất 1 lịch có doanh thu.");
       return;
     }
@@ -118,7 +125,8 @@ function CrossBranchPanel({
         staffId: crossModal.staffId,
         date: dateCross,
         chemicalBookings: chemicalPayload,
-        washBookings: washPayload
+        washBookings: washPayload,
+        productBookings: productPayload
       });
       closeModal();
       onRefresh();
@@ -212,7 +220,7 @@ function CrossBranchPanel({
                   <td>{b.date}</td>
                   <td>{b.staff_name} <span className={`badge ${b.staff_type === "main" ? "badge-blue" : "badge-yellow"}`}>{b.staff_type === "main" ? "Chính" : "Phụ"}</span></td>
                   <td>{b.staff_branch_name}</td>
-                  <td>{b.type === "chemical" ? "Hóa chất" : "Gội"}</td>
+                  <td>{b.type === "chemical" ? "Hóa chất" : (b.type === "wash" ? "Gội" : "Sản phẩm")}</td>
                   <td>{b.revenue.toLocaleString("vi-VN")} đ</td>
                   <td>
                     <button className="icon-btn danger" title="Xóa" onClick={() => handleDelete(b.id)}>
@@ -234,7 +242,7 @@ function CrossBranchPanel({
             <h3 className="attendance-modal-title">Thêm lịch chéo — {crossModal.staffName}</h3>
             <p className="muted attendance-modal-sub">Ngày: {formatViDateShort(dateCross)}</p>
 
-            <div className="attendance-modal-bookings attendance-modal-bookings--split">
+            <div className="attendance-modal-bookings" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 20 }}>
               {/* Cột hóa chất */}
               <div className="attendance-modal-section">
                 <div className="attendance-modal-section-head">
@@ -298,6 +306,38 @@ function CrossBranchPanel({
                   washLines: [...crossModal.washLines, { id: Date.now(), revenue: "", note: "" }]
                 })}>+ Thêm lịch gội</button>
               </div>
+
+              {/* Cột sản phẩm */}
+               <div className="attendance-modal-section">
+                 <div className="attendance-modal-section-head">
+                   <h4>Sản phẩm</h4>
+                 </div>
+                 <ul className="attendance-modal-lines">
+                   {crossModal.productLines.map((line, idx) => (
+                     <li key={line.id} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                       <span className="attendance-line-idx">{idx + 1}</span>
+                       <input
+                         type="number"
+                         placeholder="Doanh thu (VND)"
+                         value={line.revenue}
+                         style={{ flex: 1, minWidth: 120 }}
+                         onChange={(e) => setCrossModal({
+                           ...crossModal,
+                           productLines: crossModal.productLines.map(l => l.id === line.id ? { ...l, revenue: e.target.value } : l)
+                         })}
+                       />
+                       <button className="icon-btn danger" title="Xóa" onClick={() => setCrossModal({
+                         ...crossModal,
+                         productLines: crossModal.productLines.filter(l => l.id !== line.id)
+                       })}>🗑️</button>
+                     </li>
+                   ))}
+                 </ul>
+                 <button className="secondary" onClick={() => setCrossModal({
+                   ...crossModal,
+                   productLines: [...crossModal.productLines, { id: Date.now(), revenue: "", note: "" }]
+                 })}>+ Thêm sản phẩm</button>
+               </div>
             </div>
 
             <div className="attendance-modal-actions" style={{ marginTop: 24 }}>
@@ -324,6 +364,66 @@ export function AttendancePage({ data, selectedBranchId }) {
   const [crossBookings, setCrossBookings] = useState([]);
   const [modal, setModal] = useState(null);
   const [kpiConfig, setKpiConfig] = useState(null);
+  const [editingAdj, setEditingAdj] = useState(null);
+
+  async function refreshPenaltyHistory() {
+    if (!modal) return;
+    try {
+      const history = await api.getSalaryAdjustments({ 
+        staffId: modal.staffId, 
+        month: modal.date.slice(0, 7),
+        type: 'penalty'
+      });
+      setModal(prev => ({ ...prev, penaltyHistory: history }));
+    } catch (e) {
+      console.error("Lỗi làm mới lịch sử phạt:", e);
+    }
+  }
+
+  async function handleUpdateAdjustment() {
+    if (!editingAdj) return;
+    try {
+      const updated = await api.updateSalaryAdjustment(editingAdj.id, {
+        amount: Number(editingAdj.amount),
+        note: editingAdj.note
+      });
+      
+      // Đồng bộ với state modal nếu đang mở và là phạt đi muộn
+      if (modal && updated.attendance_id && updated.note && updated.note.startsWith('Đi muộn')) {
+        setModal(prev => ({
+          ...prev,
+          latePenalty: Number(updated.amount)
+        }));
+      }
+
+      setEditingAdj(null);
+      await refreshPenaltyHistory();
+      await refresh();
+    } catch (e) {
+      alert(e.message || "Lỗi khi cập nhật");
+    }
+  }
+
+  async function handleDeleteAdjustment(id) {
+    if (!confirm("Bạn có chắc muốn xóa khoản phạt này?")) return;
+    try {
+      const oldAdj = modal?.penaltyHistory?.find(h => h.id === id);
+      await api.deleteSalaryAdjustment(id);
+      
+      // Đồng bộ với state modal nếu là phạt đi muộn
+      if (modal && oldAdj && oldAdj.attendance_id && oldAdj.note && oldAdj.note.startsWith('Đi muộn')) {
+        setModal(prev => ({
+          ...prev,
+          latePenalty: 0
+        }));
+      }
+
+      await refreshPenaltyHistory();
+      await refresh();
+    } catch (e) {
+      alert(e.message || "Lỗi khi xóa");
+    }
+  }
 
   const chemicalMinVnd = kpiConfig?.chemicalMinVnd || 450000;
   const washDoubleCountFromVnd = kpiConfig?.washDoubleCountFromVnd || 350000;
@@ -382,6 +482,19 @@ export function AttendancePage({ data, selectedBranchId }) {
     for (const row of rowsStatus) map.set(row.staff_id, row);
     return map;
   }, [rowsStatus]);
+
+  const statusStats = useMemo(() => {
+    const allStaff = [...staffRowsMainStatus, ...staffRowsAssistantStatus];
+    let present = 0, late = 0, absent = 0, unassigned = 0;
+    for (const s of allStaff) {
+      const row = byStaffStatus.get(s.id);
+      if (!row) unassigned++;
+      else if (row.present !== 1) absent++;
+      else if (row.late_minutes != null && row.late_minutes !== "") late++;
+      else present++;
+    }
+    return { total: allStaff.length, present, late, absent, unassigned };
+  }, [staffRowsMainStatus, staffRowsAssistantStatus, byStaffStatus]);
 
   useEffect(() => {
     let cancelled = false;
@@ -447,7 +560,7 @@ export function AttendancePage({ data, selectedBranchId }) {
     setModal(null);
   }
 
-  function openKpiModal(staff) {
+  async function openKpiModal(staff) {
     const row = byStaffKpi.get(staff.id);
     let nid = 1;
     const chemParsed = parseStoredBookings(row?.chemical_bookings_json);
@@ -479,6 +592,18 @@ export function AttendancePage({ data, selectedBranchId }) {
             }))
           : [];
 
+    // Lấy lịch sử phạt trong tháng của nhân sự này
+    let history = [];
+    try {
+      history = await api.getSalaryAdjustments({ 
+        staffId: staff.id, 
+        month: dateKpi.slice(0, 7),
+        type: 'penalty'
+      });
+    } catch (e) {
+      console.error("Lỗi lấy lịch sử phạt:", e);
+    }
+
     setModal({
       kind: "kpi",
       date: dateKpi,
@@ -489,11 +614,12 @@ export function AttendancePage({ data, selectedBranchId }) {
       checkins: row ? row.checkins : 0,
       products: row ? row.products : 0,
       chemicalLines,
-      washLines
+      washLines,
+      penaltyHistory: history
     });
   }
 
-  function openStatusModal(staff) {
+  async function openStatusModal(staff) {
     const row = byStaffStatus.get(staff.id);
     const presenceStatus =
       row && row.present !== 1
@@ -501,6 +627,18 @@ export function AttendancePage({ data, selectedBranchId }) {
         : row && row.late_minutes != null && row.late_minutes !== ""
           ? "late"
           : "present";
+
+    // Lấy lịch sử phạt trong tháng của nhân sự này
+    let history = [];
+    try {
+      history = await api.getSalaryAdjustments({ 
+        staffId: staff.id, 
+        month: dateStatus.slice(0, 7),
+        type: 'penalty'
+      });
+    } catch (e) {
+      console.error("Lỗi lấy lịch sử phạt:", e);
+    }
 
     setModal({
       kind: "status",
@@ -512,7 +650,8 @@ export function AttendancePage({ data, selectedBranchId }) {
       lateMinutes: row?.late_minutes != null && row.late_minutes !== "" ? Number(row.late_minutes) : 0,
       latePenalty: row?.late_penalty != null && row.late_penalty !== "" ? Number(row.late_penalty) : 0,
       additionalPenalty: "",
-      additionalPenaltyNote: ""
+      additionalPenaltyNote: "",
+      penaltyHistory: history
     });
   }
 
@@ -606,7 +745,7 @@ export function AttendancePage({ data, selectedBranchId }) {
     const { chemicalBookings, washBookings } = chemicalWashPayloadFromRow(row, modal.staffType);
 
     try {
-      await api.saveAttendance({
+      const savedRow = await api.saveAttendance({
         staffId: modal.staffId,
         date: modal.date,
         presenceStatus: modal.presenceStatus,
@@ -625,7 +764,8 @@ export function AttendancePage({ data, selectedBranchId }) {
           month: modal.date.slice(0, 7),
           type: "penalty",
           amount: Number(modal.additionalPenalty),
-          note: `${modal.date}: ${modal.additionalPenaltyNote.trim()}`
+          note: `${modal.additionalPenaltyNote.trim()} ${formatViDateShort(modal.date)}`,
+          attendanceId: savedRow.id
         });
       }
 
@@ -820,78 +960,112 @@ export function AttendancePage({ data, selectedBranchId }) {
       )}
 
       {tab === "status" && (
-        <>
-          <div className="card" style={{ marginBottom: 16 }}>
-            <div className="page-header" style={{ marginTop: 0, marginBottom: 10 }}>
-              <h3 style={{ margin: 0 }}>Thợ chính</h3>
+        <div className="attendance-container">
+          <div className="card" style={{ marginBottom: 20 }}>
+            <div className="page-header" style={{ marginBottom: 15 }}>
+              <h3 style={{ margin: 0 }}>Chấm trạng thái ngày {formatViDateShort(dateStatus)}</h3>
+              <input
+                type="date"
+                value={dateStatus}
+                onChange={(e) => setDateStatus(e.target.value)}
+              />
             </div>
-            <table className="attendance-status-table">
-              <thead>
-                <tr>
-                  <th>{"Nh\u00e2n vi\u00ean"}</th>
-                  <th>{"Tr\u1ea1ng th\u00e1i"}</th>
-                  <th>{"H\u00e0nh \u0111\u1ed9ng"}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {staffRowsMainStatus.length === 0 ? (
+            <div className="stats-grid" style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10 }}>
+              <div className="stat-card" style={{ padding: "10px 15px" }}>
+                <div className="stat-title" style={{ fontSize: 12 }}>Tổng nhân sự</div>
+                <div className="stat-value" style={{ fontSize: 18 }}>{statusStats.total}</div>
+              </div>
+              <div className="stat-card" style={{ padding: "10px 15px" }}>
+                <div className="stat-title" style={{ fontSize: 12 }}>Có mặt</div>
+                <div className="stat-value" style={{ fontSize: 18, color: "#34d399" }}>{statusStats.present}</div>
+              </div>
+              <div className="stat-card" style={{ padding: "10px 15px" }}>
+                <div className="stat-title" style={{ fontSize: 12 }}>Đi muộn</div>
+                <div className="stat-value" style={{ fontSize: 18, color: "#fbbf24" }}>{statusStats.late}</div>
+              </div>
+              <div className="stat-card" style={{ padding: "10px 15px" }}>
+                <div className="stat-title" style={{ fontSize: 12 }}>Vắng</div>
+                <div className="stat-value" style={{ fontSize: 18, color: "#f87171" }}>{statusStats.absent}</div>
+              </div>
+              <div className="stat-card" style={{ padding: "10px 15px" }}>
+                <div className="stat-title" style={{ fontSize: 12 }}>Chưa chấm</div>
+                <div className="stat-value" style={{ fontSize: 18, color: "var(--text-muted)" }}>{statusStats.unassigned}</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="card" style={{ marginBottom: 20 }}>
+            <h4 style={{ marginBottom: 15 }}>Thợ chính</h4>
+            <div className="table-scroll">
+              <table className="attendance-status-table">
+                <thead>
                   <tr>
-                    <td colSpan={statusColCount} className="muted">
-                      Không có thợ chính trong chi nhánh.
-                    </td>
+                    <th>Nhân viên</th>
+                    <th>Trạng thái</th>
+                    <th>Hành động</th>
                   </tr>
-                ) : (
-                  staffRowsMainStatus.map((s) => (
-                    <tr key={s.id}>
-                      <td>{s.name}</td>
-                      <td>{formatAttendanceStatus(byStaffStatus.get(s.id))}</td>
-                      <td>
-                        <button className="primary" type="button" onClick={() => openStatusModal(s)}>
-                          {"Ch\u1ea5m tr\u1ea1ng th\u00e1i"}
-                        </button>
+                </thead>
+                <tbody>
+                  {staffRowsMainStatus.length === 0 ? (
+                    <tr>
+                      <td colSpan={statusColCount} className="muted">
+                        Không có thợ chính trong chi nhánh.
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                  ) : (
+                    staffRowsMainStatus.map((s) => (
+                      <tr key={s.id}>
+                        <td>{s.name}</td>
+                        <td>{formatAttendanceStatus(byStaffStatus.get(s.id))}</td>
+                        <td>
+                          <button className="primary" type="button" onClick={() => openStatusModal(s)}>
+                            {"Ch\u1ea5m tr\u1ea1ng th\u00e1i"}
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
+
           <div className="card">
-            <div className="page-header" style={{ marginTop: 0, marginBottom: 10 }}>
-              <h3 style={{ margin: 0 }}>Thợ phụ</h3>
-            </div>
-            <table>
-              <thead>
-                <tr>
-                  <th>{"Nh\u00e2n vi\u00ean"}</th>
-                  <th>{"Tr\u1ea1ng th\u00e1i"}</th>
-                  <th>{"H\u00e0nh \u0111\u1ed9ng"}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {staffRowsAssistantStatus.length === 0 ? (
+            <h4 style={{ marginBottom: 15 }}>Thợ phụ</h4>
+            <div className="table-scroll">
+              <table>
+                <thead>
                   <tr>
-                    <td colSpan={statusColCount} className="muted">
-                      Không có thợ phụ trong chi nhánh.
-                    </td>
+                    <th>Nhân viên</th>
+                    <th>Trạng thái</th>
+                    <th>Hành động</th>
                   </tr>
-                ) : (
-                  staffRowsAssistantStatus.map((s) => (
-                    <tr key={s.id}>
-                      <td>{s.name}</td>
-                      <td>{formatAttendanceStatus(byStaffStatus.get(s.id))}</td>
-                      <td>
-                        <button className="primary" type="button" onClick={() => openStatusModal(s)}>
-                          {"Ch\u1ea5m tr\u1ea1ng th\u00e1i"}
-                        </button>
+                </thead>
+                <tbody>
+                  {staffRowsAssistantStatus.length === 0 ? (
+                    <tr>
+                      <td colSpan={statusColCount} className="muted">
+                        Không có thợ phụ trong chi nhánh.
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                  ) : (
+                    staffRowsAssistantStatus.map((s) => (
+                      <tr key={s.id}>
+                        <td>{s.name}</td>
+                        <td>{formatAttendanceStatus(byStaffStatus.get(s.id))}</td>
+                        <td>
+                          <button className="primary" type="button" onClick={() => openStatusModal(s)}>
+                            {"Ch\u1ea5m tr\u1ea1ng th\u00e1i"}
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </>
+        </div>
       )}
 
       {tab === "cross" && (
@@ -1090,6 +1264,95 @@ export function AttendancePage({ data, selectedBranchId }) {
               </div>
             </div>
 
+            <div className="attendance-modal-section" style={{ borderTop: "1px solid var(--border-color)", paddingTop: 15, marginTop: 15 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                <h4 style={{ margin: 0, fontSize: 14, color: "var(--text-active)" }}>
+                  Lịch sử phạt của nhân sự
+                </h4>
+                <span className="muted" style={{ fontSize: 12 }}>Tháng {modal.date.slice(0, 7)}</span>
+              </div>
+              
+              <div className="penalty-history-list" style={{ maxHeight: 200, overflowY: "auto" }}>
+                {modal.penaltyHistory && modal.penaltyHistory.length > 0 ? (
+                  <table style={{ width: "100%", fontSize: 13, borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr style={{ borderBottom: "1px solid var(--border-color)" }}>
+                        <th style={{ textAlign: "left", padding: "8px 4px" }}>Ngày / Ghi chú</th>
+                        <th style={{ textAlign: "right", padding: "8px 4px" }}>Số tiền</th>
+                        <th style={{ textAlign: "right", padding: "8px 4px", width: 80 }}></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {modal.penaltyHistory.map((h) => {
+                        const currentDayRow = modal.kind === 'kpi' ? byStaffKpi.get(modal.staffId) : byStaffStatus.get(modal.staffId);
+                        const isToday = h.attendance_id && currentDayRow?.id === h.attendance_id;
+                        const isEditing = editingAdj?.id === h.id;
+
+                        return (
+                          <tr key={h.id} style={{ 
+                            borderBottom: "1px dotted var(--border-color)",
+                            background: isToday ? "rgba(248, 113, 113, 0.05)" : "transparent"
+                          }}>
+                            <td style={{ padding: "8px 4px" }}>
+                              {isEditing ? (
+                                <input 
+                                  type="text" 
+                                  value={editingAdj.note} 
+                                  onChange={e => setEditingAdj({...editingAdj, note: e.target.value})}
+                                  style={{ width: '100%', fontSize: 12, padding: '2px 4px' }}
+                                />
+                              ) : (
+                                <>
+                                  {isToday && <span style={{ color: "#f87171", fontWeight: "bold", marginRight: 5 }}>[Ngày này]</span>}
+                                  {h.note || "Phạt KPI/Đi muộn"}
+                                </>
+                              )}
+                            </td>
+                            <td style={{ textAlign: "right", color: "#f87171", padding: "8px 4px", fontWeight: isToday ? "bold" : "normal" }}>
+                              {isEditing ? (
+                                <input 
+                                  type="number" 
+                                  value={editingAdj.amount} 
+                                  onChange={e => setEditingAdj({...editingAdj, amount: e.target.value})}
+                                  style={{ width: 80, fontSize: 12, padding: '2px 4px', textAlign: 'right' }}
+                                />
+                              ) : (
+                                <>-{fmtMoney(h.amount)}đ</>
+                              )}
+                            </td>
+                            <td style={{ textAlign: "right", padding: "8px 4px" }}>
+                              <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                                {isEditing ? (
+                                  <>
+                                    <button className="icon-btn" title="Lưu" onClick={handleUpdateAdjustment}>✅</button>
+                                    <button className="icon-btn" title="Hủy" onClick={() => setEditingAdj(null)}>❌</button>
+                                  </>
+                                ) : (
+                                  <>
+                                    <button className="icon-btn" title="Sửa" onClick={() => setEditingAdj({ id: h.id, amount: h.amount, note: h.note || "" })}>✏️</button>
+                                    <button className="icon-btn danger" title="Xóa" onClick={() => handleDeleteAdjustment(h.id)}>🗑️</button>
+                                  </>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                ) : (
+                  <p className="muted" style={{ fontSize: 13, margin: 0 }}>Chưa có lịch sử phạt trong tháng này.</p>
+                )}
+              </div>
+              
+              <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--border-color)", display: "flex", justifyContent: "space-between" }}>
+                <span style={{ fontSize: 13, fontWeight: "bold" }}>Tổng phạt trong tháng:</span>
+                <span style={{ fontSize: 13, color: "#f87171", fontWeight: "bold" }}>
+                  -{fmtMoney(modal.penaltyHistory?.reduce((s, h) => s + h.amount, 0) || 0)}đ
+                </span>
+              </div>
+            </div>
+
             <div className="attendance-modal-actions">
               <button type="button" className="secondary" onClick={closeModal}>
                 {"H\u1ee7y"}
@@ -1184,6 +1447,95 @@ export function AttendancePage({ data, selectedBranchId }) {
                     onChange={(e) => setModal({ ...modal, additionalPenaltyNote: e.target.value })}
                   />
                 </div>
+              </div>
+            </div>
+
+            <div className="attendance-modal-section" style={{ borderTop: "1px solid var(--border-color)", paddingTop: 15, marginTop: 15 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                <h4 style={{ margin: 0, fontSize: 14, color: "var(--text-active)" }}>
+                  Lịch sử phạt của nhân sự
+                </h4>
+                <span className="muted" style={{ fontSize: 12 }}>Tháng {modal.date.slice(0, 7)}</span>
+              </div>
+              
+              <div className="penalty-history-list" style={{ maxHeight: 200, overflowY: "auto" }}>
+                {modal.penaltyHistory && modal.penaltyHistory.length > 0 ? (
+                  <table style={{ width: "100%", fontSize: 13, borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr style={{ borderBottom: "1px solid var(--border-color)" }}>
+                        <th style={{ textAlign: "left", padding: "8px 4px" }}>Ngày / Ghi chú</th>
+                        <th style={{ textAlign: "right", padding: "8px 4px" }}>Số tiền</th>
+                        <th style={{ textAlign: "right", padding: "8px 4px", width: 80 }}></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {modal.penaltyHistory.map((h) => {
+                        const currentDayRow = modal.kind === 'kpi' ? byStaffKpi.get(modal.staffId) : byStaffStatus.get(modal.staffId);
+                        const isToday = h.attendance_id && currentDayRow?.id === h.attendance_id;
+                        const isEditing = editingAdj?.id === h.id;
+
+                        return (
+                          <tr key={h.id} style={{ 
+                            borderBottom: "1px dotted var(--border-color)",
+                            background: isToday ? "rgba(248, 113, 113, 0.05)" : "transparent"
+                          }}>
+                            <td style={{ padding: "8px 4px" }}>
+                              {isEditing ? (
+                                <input 
+                                  type="text" 
+                                  value={editingAdj.note} 
+                                  onChange={e => setEditingAdj({...editingAdj, note: e.target.value})}
+                                  style={{ width: '100%', fontSize: 12, padding: '2px 4px' }}
+                                />
+                              ) : (
+                                <>
+                                  {isToday && <span style={{ color: "#f87171", fontWeight: "bold", marginRight: 5 }}>[Ngày này]</span>}
+                                  {h.note || "Phạt KPI/Đi muộn"}
+                                </>
+                              )}
+                            </td>
+                            <td style={{ textAlign: "right", color: "#f87171", padding: "8px 4px", fontWeight: isToday ? "bold" : "normal" }}>
+                              {isEditing ? (
+                                <input 
+                                  type="number" 
+                                  value={editingAdj.amount} 
+                                  onChange={e => setEditingAdj({...editingAdj, amount: e.target.value})}
+                                  style={{ width: 80, fontSize: 12, padding: '2px 4px', textAlign: 'right' }}
+                                />
+                              ) : (
+                                <>-{fmtMoney(h.amount)}đ</>
+                              )}
+                            </td>
+                            <td style={{ textAlign: "right", padding: "8px 4px" }}>
+                              <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                                {isEditing ? (
+                                  <>
+                                    <button className="icon-btn" title="Lưu" onClick={handleUpdateAdjustment}>✅</button>
+                                    <button className="icon-btn" title="Hủy" onClick={() => setEditingAdj(null)}>❌</button>
+                                  </>
+                                ) : (
+                                  <>
+                                    <button className="icon-btn" title="Sửa" onClick={() => setEditingAdj({ id: h.id, amount: h.amount, note: h.note || "" })}>✏️</button>
+                                    <button className="icon-btn danger" title="Xóa" onClick={() => handleDeleteAdjustment(h.id)}>🗑️</button>
+                                  </>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                ) : (
+                  <p className="muted" style={{ fontSize: 13, margin: 0 }}>Chưa có lịch sử phạt trong tháng này.</p>
+                )}
+              </div>
+              
+              <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--border-color)", display: "flex", justifyContent: "space-between" }}>
+                <span style={{ fontSize: 13, fontWeight: "bold" }}>Tổng phạt trong tháng:</span>
+                <span style={{ fontSize: 13, color: "#f87171", fontWeight: "bold" }}>
+                  -{fmtMoney(modal.penaltyHistory?.reduce((s, h) => s + h.amount, 0) || 0)}đ
+                </span>
               </div>
             </div>
 

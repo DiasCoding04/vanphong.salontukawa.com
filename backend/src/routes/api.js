@@ -3,7 +3,7 @@ const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
 const multer = require("multer");
-const { all, get, run } = require("../config/db");
+const { all, get, run, transaction } = require("../config/db");
 const { calculateKpiByStaff, calculateKpiWeekByStaff, calculateSalaryReport } = require("../services/reportService");
 
 const router = express.Router();
@@ -72,20 +72,39 @@ function overlapsEmploymentClause(fromField, toField) {
   return `s.start_date <= ${toField} AND (s.end_date IS NULL OR s.end_date = '' OR s.end_date >= ${fromField})`;
 }
 
-async function getStaffKpiMap(month, staffRows) {
-  if (!month || staffRows.length === 0) return new Map();
-  const { from, to } = parseMonthRange(month);
+async function getStaffKpiMap(monthOrRange, staffRows) {
+  if (!monthOrRange || staffRows.length === 0) return new Map();
+  
+  let from, to;
+  if (monthOrRange.includes("-") && monthOrRange.length === 7) {
+    // Nếu là định dạng YYYY-MM
+    const range = parseMonthRange(monthOrRange);
+    from = range.from;
+    to = range.to;
+  } else {
+    // Nếu là object {from, to} (dùng cho tuần)
+    from = monthOrRange.from;
+    to = monthOrRange.to;
+  }
+
   const ids = staffRows.map((s) => s.id);
   const placeholders = ids.map(() => "?").join(",");
+  
+  // Lấy TẤT CẢ các cấu hình có hiệu lực trong khoảng thời gian này
   const rows = await all(
     `SELECT * FROM staff_kpi_settings
      WHERE staff_id IN (${placeholders})
        AND start_date <= ?
-       AND (end_date IS NULL OR end_date = '' OR end_date >= ?)`,
+       AND (end_date IS NULL OR end_date = '' OR end_date >= ?)
+     ORDER BY start_date ASC`,
     [...ids, to, from]
   );
+  
   const map = new Map();
   for (const row of rows) {
+    // Đối với báo cáo tổng hợp (tháng/tuần), nếu một nhân viên có nhiều cấu hình,
+    // bản ghi có start_date muộn nhất (cuối cùng trong vòng lặp) sẽ được ưu tiên.
+    // Điều này đảm bảo mục tiêu mới nhất của giai đoạn báo cáo được áp dụng.
     map.set(row.staff_id, JSON.parse(row.config_json));
   }
   return map;
@@ -223,9 +242,29 @@ router.put("/staff/:id", async (req, res, next) => {
 
 router.delete("/staff/:id", async (req, res, next) => {
   try {
-    await run("DELETE FROM staff WHERE id = ?", [req.params.id]);
+    const { id } = req.params;
+
+    await transaction(async () => {
+      // Xóa tất cả dữ liệu liên quan theo thứ tự ngược lại của các ràng buộc FK
+      // 1. Xóa các bản ghi phụ thuộc vào attendance và daily_reports nhưng có staff_id
+      await run("DELETE FROM salary_adjustments WHERE staff_id = ?", [id]);
+      
+      // 2. Xóa các bản ghi trong các bảng khác có staff_id
+      await run("DELETE FROM attendance WHERE staff_id = ?", [id]);
+      await run("DELETE FROM daily_reports WHERE staff_id = ?", [id]);
+      await run("DELETE FROM hold_deductions WHERE staff_id = ?", [id]);
+      await run("DELETE FROM staff_kpi_settings WHERE staff_id = ?", [id]);
+      await run("DELETE FROM staff_personal_info WHERE staff_id = ?", [id]);
+      await run("DELETE FROM manager_kpi_staff WHERE staff_id = ?", [id]);
+      await run("DELETE FROM cross_branch_bookings WHERE staff_id = ?", [id]);
+      
+      // 3. Cuối cùng xóa bản ghi trong bảng staff
+      await run("DELETE FROM staff WHERE id = ?", [id]);
+    });
+    
     res.status(204).send();
   } catch (error) {
+    console.error("Lỗi khi xóa nhân viên:", error);
     next(error);
   }
 });
@@ -366,65 +405,73 @@ router.put("/attendance", async (req, res, next) => {
     const cbBookings = await all("SELECT type, revenue FROM cross_branch_bookings WHERE staff_id = ? AND date = ?", [staffId, date]);
     const cbChemical = cbBookings.filter(b => b.type === 'chemical');
     const cbWash = cbBookings.filter(b => b.type === 'wash');
+    const cbProduct = cbBookings.filter(b => b.type === 'product');
 
     const bookings = chemical.length + cbChemical.length;
     const wash =
       staff.type === "assistant"
         ? washLines.reduce((sum, b) => sum + (b.revenue >= washDoubleCountFromVnd ? 2 : 1), 0) + cbWash.reduce((sum, b) => sum + (b.revenue >= washDoubleCountFromVnd ? 2 : 1), 0)
         : 0;
+    
+    // totalProducts = main branch products + cross branch products
+    const totalProducts = (Number(products) || 0) + cbProduct.length;
+    
     const revenue = [...chemical, ...washLines, ...cbBookings].reduce((s, b) => s + b.revenue, 0);
     const chemicalJson = JSON.stringify(chemical);
     const washJson = JSON.stringify(washLines);
 
-    await run(
-      `INSERT INTO attendance (staff_id, date, present, bookings, total_clients, checkins, products, revenue, wash, chemical_bookings_json, wash_bookings_json, late_minutes, late_penalty)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(staff_id, date) DO UPDATE SET
-         present=excluded.present,
-         bookings=excluded.bookings,
-         total_clients=excluded.total_clients,
-         checkins=excluded.checkins,
-         products=excluded.products,
-         revenue=excluded.revenue,
-         wash=excluded.wash,
-         chemical_bookings_json=excluded.chemical_bookings_json,
-         wash_bookings_json=excluded.wash_bookings_json,
-         late_minutes=excluded.late_minutes,
-         late_penalty=excluded.late_penalty`,
-      [
-        staffId,
-        date,
-        present ? 1 : 0,
-        bookings,
-        totalClients || 0,
-        checkins || 0,
-        products || 0,
-        revenue,
-        wash,
-        chemicalJson,
-        washJson,
-        late ? lateMinutes : null,
-        late ? latePenalty : null
-      ]
-    );
-    const row = await get("SELECT * FROM attendance WHERE staff_id = ? AND date = ?", [staffId, date]);
-    
-    // Chỉ xóa các khoản phạt đi muộn TỰ ĐỘNG (loại 'penalty' và có note chứa 'Đi muộn')
-    // Để tránh xóa nhầm các khoản phạt thủ công khác cùng ngày (nếu có sau này)
-    await run(
-      "DELETE FROM salary_adjustments WHERE attendance_id = ? AND type = 'penalty' AND note LIKE 'Đi muộn%'", 
-      [row.id]
-    );
-
-    if (late && latePenalty > 0) {
-      const month = date.slice(0, 7);
-      const note = `Đi muộn ${formatViDateFromIso(date)}: ${lateMinutes} phút`;
+    let rowOut;
+    await transaction(async () => {
       await run(
-        `INSERT INTO salary_adjustments (staff_id, month, type, amount, note, attendance_id) VALUES (?, ?, 'penalty', ?, ?, ?)`,
-        [staffId, month, latePenalty, note, row.id]
+        `INSERT INTO attendance (staff_id, date, present, bookings, total_clients, checkins, products, revenue, wash, chemical_bookings_json, wash_bookings_json, late_minutes, late_penalty)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(staff_id, date) DO UPDATE SET
+           present=excluded.present,
+           bookings=excluded.bookings,
+           total_clients=excluded.total_clients,
+           checkins=excluded.checkins,
+           products=excluded.products,
+           revenue=excluded.revenue,
+           wash=excluded.wash,
+           chemical_bookings_json=excluded.chemical_bookings_json,
+           wash_bookings_json=excluded.wash_bookings_json,
+           late_minutes=excluded.late_minutes,
+           late_penalty=excluded.late_penalty`,
+        [
+          staffId,
+          date,
+          present ? 1 : 0,
+          bookings,
+          totalClients || 0,
+          checkins || 0,
+          totalProducts,
+          revenue,
+          wash,
+          chemicalJson,
+          washJson,
+          late ? lateMinutes : null,
+          late ? latePenalty : null
+        ]
       );
-    }
-    const rowOut = await get("SELECT * FROM attendance WHERE staff_id = ? AND date = ?", [staffId, date]);
+      
+      const row = await get("SELECT id FROM attendance WHERE staff_id = ? AND date = ?", [staffId, date]);
+      
+      await run(
+        "DELETE FROM salary_adjustments WHERE attendance_id = ? AND type = 'penalty' AND note LIKE 'Đi muộn%'", 
+        [row.id]
+      );
+
+      if (late && latePenalty > 0) {
+        const month = date.slice(0, 7);
+        const note = `Đi muộn ${lateMinutes} phút ${formatViDateFromIso(date)}`;
+        await run(
+          `INSERT INTO salary_adjustments (staff_id, month, type, amount, note, attendance_id) VALUES (?, ?, 'penalty', ?, ?, ?)`,
+          [staffId, month, latePenalty, note, row.id]
+        );
+      }
+      rowOut = await get("SELECT * FROM attendance WHERE id = ?", [row.id]);
+    });
+
     res.json(rowOut);
   } catch (error) {
     next(error);
@@ -462,7 +509,7 @@ router.get("/cross-branch-bookings", async (req, res, next) => {
 
 router.post("/cross-branch-bookings", async (req, res, next) => {
   try {
-    const { serviceBranchId, staffId, date, chemicalBookings = [], washBookings = [] } = req.body;
+    const { serviceBranchId, staffId, date, chemicalBookings = [], washBookings = [], productBookings = [] } = req.body;
     if (!serviceBranchId || !staffId || !date) {
       return res.status(400).json({ message: "Thiếu dữ liệu bắt buộc" });
     }
@@ -477,6 +524,7 @@ router.post("/cross-branch-bookings", async (req, res, next) => {
     let totalRevenue = 0;
     let addedChemical = 0;
     let addedWashVal = 0;
+    let addedProducts = 0;
 
     // Validate
     for (const b of chemicalBookings) {
@@ -491,41 +539,60 @@ router.post("/cross-branch-bookings", async (req, res, next) => {
         return res.status(400).json({ message: "Gội phải > 0 VND" });
       }
     }
-
-    // Insert
-    for (const b of chemicalBookings) {
+    for (const b of productBookings) {
       const rev = Number(b.revenue);
-      await run(`
-        INSERT INTO cross_branch_bookings (service_branch_id, staff_id, date, type, revenue, note)
-        VALUES (?, ?, ?, 'chemical', ?, ?)
-      `, [serviceBranchId, staffId, date, rev, b.note || null]);
-      totalRevenue += rev;
-      addedChemical += 1;
-    }
-
-    for (const b of washBookings) {
-      const rev = Number(b.revenue);
-      await run(`
-        INSERT INTO cross_branch_bookings (service_branch_id, staff_id, date, type, revenue, note)
-        VALUES (?, ?, ?, 'wash', ?, ?)
-      `, [serviceBranchId, staffId, date, rev, b.note || null]);
-      totalRevenue += rev;
-      if (staff.type === "assistant") {
-        addedWashVal += (rev >= washDoubleCountFromVnd ? 2 : 1);
+      if (!Number.isFinite(rev) || rev <= 0) {
+        return res.status(400).json({ message: "Sản phẩm phải > 0 VND" });
       }
     }
 
-    // Update attendance
-    if (addedChemical > 0 || washBookings.length > 0) {
-      await run(`
-        INSERT INTO attendance (staff_id, date, present, bookings, total_clients, checkins, products, revenue, wash, chemical_bookings_json, wash_bookings_json)
-        VALUES (?, ?, 1, ?, 0, 0, 0, ?, ?, '[]', '[]')
-        ON CONFLICT(staff_id, date) DO UPDATE SET
-          bookings = bookings + excluded.bookings,
-          revenue = revenue + excluded.revenue,
-          wash = wash + excluded.wash
-      `, [staffId, date, addedChemical, totalRevenue, addedWashVal]);
-    }
+    // Insert and Update attendance in a transaction
+    await transaction(async () => {
+      for (const b of chemicalBookings) {
+        const rev = Number(b.revenue);
+        await run(`
+          INSERT INTO cross_branch_bookings (service_branch_id, staff_id, date, type, revenue, note)
+          VALUES (?, ?, ?, 'chemical', ?, ?)
+        `, [serviceBranchId, staffId, date, rev, b.note || null]);
+        totalRevenue += rev;
+        addedChemical += 1;
+      }
+
+      for (const b of washBookings) {
+        const rev = Number(b.revenue);
+        await run(`
+          INSERT INTO cross_branch_bookings (service_branch_id, staff_id, date, type, revenue, note)
+          VALUES (?, ?, ?, 'wash', ?, ?)
+        `, [serviceBranchId, staffId, date, rev, b.note || null]);
+        totalRevenue += rev;
+        if (staff.type === "assistant") {
+          addedWashVal += (rev >= washDoubleCountFromVnd ? 2 : 1);
+        }
+      }
+
+      for (const b of productBookings) {
+        const rev = Number(b.revenue);
+        await run(`
+          INSERT INTO cross_branch_bookings (service_branch_id, staff_id, date, type, revenue, note)
+          VALUES (?, ?, ?, 'product', ?, ?)
+        `, [serviceBranchId, staffId, date, rev, b.note || null]);
+        totalRevenue += rev;
+        addedProducts += 1;
+      }
+
+      // Update attendance
+      if (addedChemical > 0 || washBookings.length > 0 || addedProducts > 0) {
+        await run(`
+          INSERT INTO attendance (staff_id, date, present, bookings, total_clients, checkins, products, revenue, wash, chemical_bookings_json, wash_bookings_json)
+          VALUES (?, ?, 1, ?, 0, 0, ?, ?, ?, '[]', '[]')
+          ON CONFLICT(staff_id, date) DO UPDATE SET
+            bookings = bookings + excluded.bookings,
+            revenue = revenue + excluded.revenue,
+            wash = wash + excluded.wash,
+            products = products + excluded.products
+        `, [staffId, date, addedChemical, addedProducts, totalRevenue, addedWashVal]);
+      }
+    });
 
     res.json({ success: true });
   } catch (error) {
@@ -548,6 +615,7 @@ router.put("/cross-branch-bookings/:id", async (req, res, next) => {
     const oldStaff = await get("SELECT type FROM staff WHERE id = ?", [oldRow.staff_id]);
     const isOldWash = oldRow.type === 'wash';
     const isOldChem = oldRow.type === 'chemical';
+    const isOldProd = oldRow.type === 'product';
     
     const kpiConfig = JSON.parse((await get("SELECT config_json FROM kpi_config WHERE id = 1")).config_json);
     const washDoubleCountFromVnd = kpiConfig.washDoubleCountFromVnd || 350000;
@@ -555,38 +623,45 @@ router.put("/cross-branch-bookings/:id", async (req, res, next) => {
     const oldWashCount = (isOldWash && oldRow.revenue >= washDoubleCountFromVnd) ? 2 : (isOldWash ? 1 : 0);
     const oldWashVal = (oldStaff.type === "assistant" && isOldWash) ? oldWashCount : 0;
     const oldBookVal = isOldChem ? 1 : 0;
+    const oldProdVal = isOldProd ? 1 : 0;
 
-    await run(`
-      UPDATE attendance SET
-        bookings = MAX(0, bookings - ?),
-        revenue = MAX(0, revenue - ?),
-        wash = MAX(0, wash - ?)
-      WHERE staff_id = ? AND date = ?
-    `, [oldBookVal, oldRow.revenue, oldWashVal, oldRow.staff_id, oldRow.date]);
+    await transaction(async () => {
+      await run(`
+        UPDATE attendance SET
+          bookings = MAX(0, bookings - ?),
+          revenue = MAX(0, revenue - ?),
+          wash = MAX(0, wash - ?),
+          products = MAX(0, products - ?)
+        WHERE staff_id = ? AND date = ?
+      `, [oldBookVal, oldRow.revenue, oldWashVal, oldProdVal, oldRow.staff_id, oldRow.date]);
 
-    // Cập nhật bản ghi mới
-    await run(`
-      UPDATE cross_branch_bookings
-      SET service_branch_id = ?, staff_id = ?, date = ?, type = ?, revenue = ?, note = ?
-      WHERE id = ?
-    `, [serviceBranchId, staffId, date, type, revenue, note || null, id]);
+      // Cập nhật bản ghi mới
+      await run(`
+        UPDATE cross_branch_bookings
+        SET service_branch_id = ?, staff_id = ?, date = ?, type = ?, revenue = ?, note = ?
+        WHERE id = ?
+      `, [serviceBranchId, staffId, date, type, revenue, note || null, id]);
 
-    // Áp dụng KPI của bản ghi mới
-    const newStaff = await get("SELECT type FROM staff WHERE id = ?", [staffId]);
-    const isNewWash = type === 'wash';
-    const isNewChem = type === 'chemical';
-    const newWashCount = (isNewWash && revenue >= washDoubleCountFromVnd) ? 2 : (isNewWash ? 1 : 0);
-    const newWashVal = (newStaff.type === "assistant" && isNewWash) ? newWashCount : 0;
-    const newBookVal = isNewChem ? 1 : 0;
+      // Áp dụng KPI của bản ghi mới
+      const newStaff = await get("SELECT type FROM staff WHERE id = ?", [staffId]);
+      const isNewWash = type === 'wash';
+      const isNewChem = type === 'chemical';
+      const isNewProd = type === 'product';
+      const newWashCount = (isNewWash && revenue >= washDoubleCountFromVnd) ? 2 : (isNewWash ? 1 : 0);
+      const newWashVal = (newStaff.type === "assistant" && isNewWash) ? newWashCount : 0;
+      const newBookVal = isNewChem ? 1 : 0;
+      const newProdVal = isNewProd ? 1 : 0;
 
-    await run(`
-      INSERT INTO attendance (staff_id, date, present, bookings, total_clients, checkins, products, revenue, wash, chemical_bookings_json, wash_bookings_json)
-      VALUES (?, ?, 1, ?, 0, 0, 0, ?, ?, '[]', '[]')
-      ON CONFLICT(staff_id, date) DO UPDATE SET
-        bookings = bookings + excluded.bookings,
-        revenue = revenue + excluded.revenue,
-        wash = wash + excluded.wash
-    `, [staffId, date, newBookVal, revenue, newWashVal]);
+      await run(`
+        INSERT INTO attendance (staff_id, date, present, bookings, total_clients, checkins, products, revenue, wash, chemical_bookings_json, wash_bookings_json)
+        VALUES (?, ?, 1, ?, 0, 0, ?, ?, ?, '[]', '[]')
+        ON CONFLICT(staff_id, date) DO UPDATE SET
+          bookings = bookings + excluded.bookings,
+          revenue = revenue + excluded.revenue,
+          wash = wash + excluded.wash,
+          products = products + excluded.products
+      `, [staffId, date, newBookVal, newProdVal, revenue, newWashVal]);
+    });
 
     res.json({ success: true });
   } catch (error) {
@@ -605,21 +680,28 @@ router.delete("/cross-branch-bookings/:id", async (req, res, next) => {
     const staff = await get("SELECT type FROM staff WHERE id = ?", [row.staff_id]);
     const isWash = row.type === 'wash';
     const isChem = row.type === 'chemical';
+    const isProd = row.type === 'product';
     
     const kpiConfig = JSON.parse((await get("SELECT config_json FROM kpi_config WHERE id = 1")).config_json);
     const washDoubleCountFromVnd = kpiConfig.washDoubleCountFromVnd || 350000;
     const washCount = (isWash && row.revenue >= washDoubleCountFromVnd) ? 2 : (isWash ? 1 : 0);
     const washVal = (staff.type === "assistant" && isWash) ? washCount : 0;
     const bookVal = isChem ? 1 : 0;
+    const prodVal = isProd ? 1 : 0;
 
-    // Trừ đi trong attendance
-    await run(`
-      UPDATE attendance SET
-        bookings = MAX(0, bookings - ?),
-        revenue = MAX(0, revenue - ?),
-        wash = MAX(0, wash - ?)
-      WHERE staff_id = ? AND date = ?
-    `, [bookVal, row.revenue, washVal, row.staff_id, row.date]);
+    // Trừ đi trong attendance in a transaction
+    await transaction(async () => {
+      await run("DELETE FROM cross_branch_bookings WHERE id = ?", [id]);
+
+      await run(`
+        UPDATE attendance SET
+          bookings = MAX(0, bookings - ?),
+          revenue = MAX(0, revenue - ?),
+          wash = MAX(0, wash - ?),
+          products = MAX(0, products - ?)
+        WHERE staff_id = ? AND date = ?
+      `, [bookVal, row.revenue, washVal, prodVal, row.staff_id, row.date]);
+    });
 
     res.json({ success: true });
   } catch (error) {
@@ -717,6 +799,7 @@ router.get("/staff-kpi-settings", async (req, res, next) => {
 
     if (!row) return res.json(null);
     res.json({
+      id: row.id,
       staffId: row.staff_id,
       startDate: row.start_date,
       endDate: row.end_date,
@@ -729,27 +812,99 @@ router.get("/staff-kpi-settings", async (req, res, next) => {
 
 router.put("/staff-kpi-settings", async (req, res, next) => {
   try {
-    const { staffId, startDate, endDate, config } = req.body;
+    const { id, staffId, startDate, endDate, config } = req.body;
     if (!staffId || !startDate || !config) {
       return res.status(400).json({ message: "staffId, startDate, and config are required" });
     }
 
-    await run(
-      `INSERT INTO staff_kpi_settings (staff_id, start_date, end_date, config_json)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(staff_id, start_date) DO UPDATE SET
-         end_date = excluded.end_date,
-         config_json = excluded.config_json`,
-      [staffId, startDate, endDate || null, JSON.stringify(config)]
+    // --- VALIDATION ---
+    // 1. Kiểm tra ngày tháng hợp lệ
+    if (endDate && startDate >= endDate) {
+      return res.status(400).json({ message: "Ngày bắt đầu phải nhỏ hơn ngày kết thúc." });
+    }
+
+    // 2. Kiểm tra các chỉ số không được âm
+    const numericKeys = [
+      'monthlyBookings', 'monthlyCheckinRate', 'weeklyBookings', 
+      'weeklyCheckinRate', 'monthlyRevenue', 'monthlyProducts', 'weeklyWash'
+    ];
+    for (const key of numericKeys) {
+      if (config[key] !== null && config[key] !== undefined && config[key] < 0) {
+        return res.status(400).json({ message: `Chỉ tiêu ${key} không được là số âm.` });
+      }
+    }
+
+    // 3. Kiểm tra xem ngày bắt đầu mới có đè lên bản ghi cũ đã kết thúc không
+    const overlap = await get(
+      `SELECT start_date, end_date FROM staff_kpi_settings 
+       WHERE staff_id = ? AND end_date IS NOT NULL AND end_date != ''
+       AND end_date >= ? AND id != ?`,
+      [staffId, startDate, id || 0]
     );
-    const row = await get(
-      "SELECT * FROM staff_kpi_settings WHERE staff_id = ? AND start_date = ?", 
-      [staffId, startDate]
-    );
+
+    if (overlap) {
+      return res.status(400).json({ 
+        message: `Ngày bắt đầu (${startDate}) không được phép đè lên bản ghi đã kết thúc (kết thúc ngày ${overlap.end_date}).` 
+      });
+    }
+
+    let row;
+    if (id) {
+      // 2. Nếu có ID, thực hiện cập nhật bản ghi cụ thể
+      const current = await get("SELECT end_date FROM staff_kpi_settings WHERE id = ?", [id]);
+      
+      // Nếu bản ghi cũ đã kết thúc, ta chỉ cập nhật config, giữ nguyên ngày tháng
+      if (current && current.end_date) {
+        await run(
+          `UPDATE staff_kpi_settings SET config_json = ? WHERE id = ?`,
+          [JSON.stringify(config), id]
+        );
+      } else {
+        // Bản ghi đang hoạt động (không có end_date) => Ghi đè bình thường
+        await run(
+          `UPDATE staff_kpi_settings SET 
+             start_date = ?, 
+             end_date = ?, 
+             config_json = ? 
+           WHERE id = ?`,
+          [startDate, endDate || null, JSON.stringify(config), id]
+        );
+      }
+      row = await get("SELECT * FROM staff_kpi_settings WHERE id = ?", [id]);
+    } else {
+      // 3. Nếu không có ID, kiểm tra xem đã có bản ghi active (không có end_date) chưa
+      const active = await get(
+        "SELECT id FROM staff_kpi_settings WHERE staff_id = ? AND (end_date IS NULL OR end_date = '')",
+        [staffId]
+      );
+
+      if (active) {
+        // Ghi đè bản ghi active hiện có
+        await run(
+          `UPDATE staff_kpi_settings SET 
+             start_date = ?, 
+             end_date = ?, 
+             config_json = ? 
+           WHERE id = ?`,
+          [startDate, endDate || null, JSON.stringify(config), active.id]
+        );
+        row = await get("SELECT * FROM staff_kpi_settings WHERE id = ?", [active.id]);
+      } else {
+        // Tạo mới hoàn toàn
+        const result = await run(
+          `INSERT INTO staff_kpi_settings (staff_id, start_date, end_date, config_json)
+           VALUES (?, ?, ?, ?)`,
+          [staffId, startDate, endDate || null, JSON.stringify(config)]
+        );
+        row = await get("SELECT * FROM staff_kpi_settings WHERE id = ?", [result.id]);
+      }
+    }
+
     if (!row) {
       throw new Error("Không tìm thấy cấu hình vừa lưu");
     }
     res.json({
+      id: row.id,
       staffId: row.staff_id,
       startDate: row.start_date,
       endDate: row.end_date,
@@ -920,16 +1075,18 @@ router.post("/salary-adjustments", async (req, res, next) => {
 router.put("/salary-adjustments/bulk", async (req, res, next) => {
   try {
     const { staffId, month, commission = 0, booking8 = 0, kpibonus = 0 } = req.body;
-    await run(
-      `DELETE FROM salary_adjustments
-       WHERE staff_id = ? AND month = ? AND type IN ('commission', 'booking8', 'kpibonus')`,
-      [staffId, month]
-    );
-    await run(
-      `INSERT INTO salary_adjustments (staff_id, month, type, amount)
-       VALUES (?, ?, 'commission', ?), (?, ?, 'booking8', ?), (?, ?, 'kpibonus', ?)`,
-      [staffId, month, commission, staffId, month, booking8, staffId, month, kpibonus]
-    );
+    await transaction(async () => {
+      await run(
+        `DELETE FROM salary_adjustments
+         WHERE staff_id = ? AND month = ? AND type IN ('commission', 'booking8', 'kpibonus')`,
+        [staffId, month]
+      );
+      await run(
+        `INSERT INTO salary_adjustments (staff_id, month, type, amount)
+         VALUES (?, ?, 'commission', ?), (?, ?, 'booking8', ?), (?, ?, 'kpibonus', ?)`,
+        [staffId, month, commission, staffId, month, booking8, staffId, month, kpibonus]
+      );
+    });
     res.json({ ok: true });
   } catch (error) {
     next(error);
@@ -956,6 +1113,55 @@ router.get("/salary-adjustments", async (req, res, next) => {
     query += " ORDER BY id DESC";
     const rows = await all(query, params);
     res.json(rows);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.put("/salary-adjustments/:id", async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { amount, note } = req.body;
+    
+    await transaction(async () => {
+      const oldRow = await get("SELECT * FROM salary_adjustments WHERE id = ?", [id]);
+      if (!oldRow) return res.status(404).json({ message: "Không tìm thấy" });
+
+      await run(
+        "UPDATE salary_adjustments SET amount = ?, note = ? WHERE id = ?",
+        [amount, note || null, id]
+      );
+
+      // Nếu đây là phạt đi muộn (có liên kết attendance_id), ta cập nhật cả bảng attendance để đồng bộ
+      if (oldRow.attendance_id && oldRow.type === 'penalty' && oldRow.note && oldRow.note.startsWith('Đi muộn')) {
+        await run(
+          "UPDATE attendance SET late_penalty = ? WHERE id = ?",
+          [amount, oldRow.attendance_id]
+        );
+      }
+    });
+
+    const row = await get("SELECT * FROM salary_adjustments WHERE id = ?", [id]);
+    res.json(row);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete("/salary-adjustments/:id", async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    await transaction(async () => {
+      const oldRow = await get("SELECT * FROM salary_adjustments WHERE id = ?", [id]);
+      if (oldRow && oldRow.attendance_id && oldRow.type === 'penalty' && oldRow.note && oldRow.note.startsWith('Đi muộn')) {
+        await run(
+          "UPDATE attendance SET late_penalty = 0 WHERE id = ?",
+          [oldRow.attendance_id]
+        );
+      }
+      await run("DELETE FROM salary_adjustments WHERE id = ?", [id]);
+    });
+    res.status(204).end();
   } catch (error) {
     next(error);
   }
@@ -1018,7 +1224,7 @@ router.get("/reports/kpi-week", async (req, res, next) => {
       branchId ? [from, to, branchId] : [from, to]
     );
     const kpiConfig = JSON.parse((await get("SELECT config_json FROM kpi_config WHERE id = 1")).config_json);
-    const staffKpiMap = await getStaffKpiMap(staffKpiLookupMonth, staffRows);
+    const staffKpiMap = await getStaffKpiMap({ from, to }, staffRows);
     const data = calculateKpiWeekByStaff(staffRows, attendanceRows, kpiConfig, staffKpiMap);
     res.json(data);
   } catch (error) {
@@ -1099,14 +1305,16 @@ router.post("/hold-deductions/apply-month", async (req, res, next) => {
     const kpiRows = calculateKpiByStaff(staffRows, attendanceRows, kpiConfig, staffKpiMap);
     const salaries = calculateSalaryReport(staffRows, attendanceRows, kpiRows, adjustments, kpiConfig, holdHistoryMap, month);
 
-    for (const row of salaries) {
-      await run(
-        `INSERT INTO hold_deductions (staff_id, month, amount)
-         VALUES (?, ?, ?)
-         ON CONFLICT(staff_id, month) DO UPDATE SET amount = excluded.amount`,
-        [row.id, month, row.holdDeduction]
-      );
-    }
+    await transaction(async () => {
+      for (const row of salaries) {
+        await run(
+          `INSERT INTO hold_deductions (staff_id, month, amount)
+           VALUES (?, ?, ?)
+           ON CONFLICT(staff_id, month) DO UPDATE SET amount = excluded.amount`,
+          [row.id, month, row.holdDeduction]
+        );
+      }
+    });
     res.json({ ok: true, totalStaff: salaries.length });
   } catch (error) {
     next(error);
@@ -1230,19 +1438,59 @@ router.put("/daily-reports", async (req, res, next) => {
         await run(
           `INSERT INTO salary_adjustments (staff_id, month, type, amount, note, attendance_id, daily_report_id)
            VALUES (?, ?, 'penalty', ?, ?, NULL, ?)`,
-          [staffId, month, wp, `Báo cáo công việc (${viNote}): ${statusText}`, dr.id]
+          [staffId, month, wp, `Báo cáo công việc ${statusText} ${viNote}`, dr.id]
         );
       }
       if (videoStatus === "not_posted" && vp != null && vp > 0) {
         await run(
           `INSERT INTO salary_adjustments (staff_id, month, type, amount, note, attendance_id, daily_report_id)
            VALUES (?, ?, 'penalty', ?, ?, NULL, ?)`,
-          [staffId, month, vp, `Báo cáo video (${viNote}): không đăng`, dr.id]
+          [staffId, month, vp, `Báo cáo video không đăng ${viNote}`, dr.id]
         );
       }
     }
 
     res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/reports/dashboard", async (req, res, next) => {
+  try {
+    const { month } = req.query; // YYYY-MM
+    const currentMonthStr = month || new Date().toISOString().slice(0, 7);
+
+    // 1. Revenue and Products by Branch for the month
+    const branchStats = await all(`
+      SELECT 
+        b.id as branch_id, 
+        b.name as branch_name,
+        SUM(a.revenue) as total_revenue,
+        SUM(a.products) as total_products
+      FROM branches b
+      LEFT JOIN staff s ON s.branch_id = b.id
+      LEFT JOIN attendance a ON a.staff_id = s.id AND a.date LIKE ?
+      GROUP BY b.id
+    `, [`${currentMonthStr}-%`]);
+
+    // 2. Daily Revenue for all branches for the month
+    const dailyStats = await all(`
+      SELECT 
+        a.date,
+        SUM(a.revenue) as total_revenue,
+        SUM(a.products) as total_products
+      FROM attendance a
+      WHERE a.date LIKE ?
+      GROUP BY a.date
+      ORDER BY a.date ASC
+    `, [`${currentMonthStr}-%`]);
+
+    res.json({
+      month: currentMonthStr,
+      branchStats,
+      dailyStats
+    });
   } catch (error) {
     next(error);
   }
