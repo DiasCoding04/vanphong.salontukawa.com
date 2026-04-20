@@ -15,6 +15,151 @@ function formatVnd(n) {
   return `${n.toLocaleString("vi-VN")} đ`;
 }
 
+function monthStringToIsoRange(month) {
+  const [y, m] = String(month).split("-").map(Number);
+  if (!y || !m) return { from: "", to: "" };
+  const from = `${y}-${String(m).padStart(2, "0")}-01`;
+  const last = new Date(y, m, 0).getDate();
+  const to = `${y}-${String(m).padStart(2, "0")}-${String(last).padStart(2, "0")}`;
+  return { from, to };
+}
+
+function dayStatusLabel(row) {
+  if (!row) return "—";
+  if (row.present !== 1) return "Vắng";
+  if (row.late_minutes != null && row.late_minutes !== "") return `Đi muộn (${row.late_minutes}′)`;
+  return "Có mặt";
+}
+
+/** Cột bảng tổng → cột bảng chi tiết (ô được tô trong modal). */
+const DRILL_COL_TO_DETAIL = {
+  name: "date",
+  status: "status",
+  clients: "clients",
+  checkins: "checkins",
+  checkinPct: "checkinPct",
+  bookings: "bookings",
+  wash: "wash",
+  products: "products",
+  revenue: "revenue"
+};
+
+function KpiHistoryModal({ open, onClose, staff, rangeFrom, rangeTo, selectedBranchId, periodTitle, highlightCol, isAssistant }) {
+  const [dayRows, setDayRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!open || !staff?.id || !rangeFrom || !rangeTo || selectedBranchId == null || selectedBranchId === "") {
+      setDayRows([]);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    (async () => {
+      try {
+        const all = await api.getAttendanceByRange(rangeFrom, rangeTo, selectedBranchId);
+        if (cancelled) return;
+        const mine = all.filter((r) => r.staff_id === staff.id);
+        const byDate = new Map(mine.map((r) => [r.date, r]));
+        const days = [];
+        let d = rangeFrom;
+        while (d <= rangeTo) {
+          days.push({ date: d, row: byDate.get(d) ?? null });
+          d = addIsoDays(d, 1);
+        }
+        setDayRows(days);
+      } catch {
+        if (!cancelled) setDayRows([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, staff?.id, rangeFrom, rangeTo, selectedBranchId]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  if (!open || !staff) return null;
+
+  const showWash = isAssistant;
+  const colSpan = showWash ? 9 : 8;
+  function HC(col) {
+    return highlightCol === col ? "kpi-history-col-highlight" : undefined;
+  }
+
+  return (
+    <div className="attendance-modal" role="dialog" aria-modal="true" aria-label="Chi tiết KPI theo ngày">
+      <button type="button" className="attendance-modal-backdrop" onClick={onClose} aria-label="Đóng" />
+      <div className="attendance-modal-panel" style={{ maxWidth: 960, width: "min(960px, 96vw)" }}>
+        <button type="button" className="attendance-modal-close" onClick={onClose} aria-label="Đóng">
+          ×
+        </button>
+        <h3 className="attendance-modal-title">Chi tiết theo ngày</h3>
+        <p className="muted attendance-modal-sub">
+          {staff.name} · {periodTitle}
+        </p>
+        <div className="table-scroll kpi-table-scroll" style={{ maxHeight: "70vh" }}>
+          <table className="kpi-attendance-table kpi-history-modal-table">
+            <thead>
+              <tr>
+                <th className={HC("date")}>Ngày</th>
+                <th className={HC("status")}>Trạng thái</th>
+                <th className={HC("clients")}>Khách</th>
+                <th className={HC("checkins")}>Check-in</th>
+                <th className={HC("checkinPct")}>% check-in</th>
+                <th className={HC("bookings")}>Lịch HC</th>
+                {showWash ? <th className={HC("wash")}>Lịch gội</th> : null}
+                <th className={HC("products")}>Sản phẩm</th>
+                <th className={HC("revenue")}>Doanh thu</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr>
+                  <td colSpan={colSpan} className="muted">
+                    Đang tải...
+                  </td>
+                </tr>
+              ) : dayRows.length === 0 ? (
+                <tr>
+                  <td colSpan={colSpan} className="muted">
+                    Không có dữ liệu trong kỳ.
+                  </td>
+                </tr>
+              ) : (
+                dayRows.map(({ date, row }) => (
+                  <tr key={date}>
+                    <td className={HC("date")}>{formatViDateShort(date)}</td>
+                    <td className={HC("status")}>{dayStatusLabel(row)}</td>
+                    <td className={HC("clients")}>{row ? row.total_clients ?? 0 : "—"}</td>
+                    <td className={HC("checkins")}>{row ? row.checkins ?? 0 : "—"}</td>
+                    <td className={HC("checkinPct")}>
+                      {row ? formatCheckinRatePct(row.total_clients, row.checkins) : "—"}
+                    </td>
+                    <td className={HC("bookings")}>{row ? row.bookings ?? 0 : "—"}</td>
+                    {showWash ? <td className={HC("wash")}>{row ? row.wash ?? 0 : "—"}</td> : null}
+                    <td className={HC("products")}>{row ? row.products ?? 0 : "—"}</td>
+                    <td className={HC("revenue")}>{row ? formatVnd(Number(row.revenue) || 0) : "—"}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /**
  * Nền ô theo KPI. Backend trả checks / checksActive: tuần — lịch HC, check-in, (thợ phụ) gội;
  * tháng — chỉ doanh thu và sản phẩm (không tô % check-in / lịch HC).
@@ -36,12 +181,49 @@ function AttendanceStyleTotalsTable({
   kpiReady,
   kpiRowById,
   /** "week": cột lịch đặt gội cho thợ phụ; "month": không có cột này (KPI tháng không tính gội). */
-  period
+  period,
+  /** Khi đủ 3 giá trị: mỗi ô mở modal chi tiết theo ngày (GET /attendance?from&to). */
+  rangeFrom,
+  rangeTo,
+  selectedBranchId,
+  /** Nhãn kỳ trong modal, ví dụ "Tuần 01/04/2026 – 07/04/2026" hoặc "Tháng 2026-04". */
+  periodRangeTitle
 }) {
+  const [history, setHistory] = useState(null);
   const emptyMsg = isAssistant ? "Không có thợ phụ trong chi nhánh." : "Không có thợ chính trong chi nhánh.";
   const showWashColumn = isAssistant && period === "week";
   /* 8 cột thợ chính (+1 cột gội nếu thợ phụ) — khớp colgroup/colspan, tránh ô trống bên phải */
   const colCount = showWashColumn ? 9 : 8;
+  const canDrill = Boolean(selectedBranchId && rangeFrom && rangeTo);
+
+  function tdDrill(className, colKey, children, s) {
+    const cls = [className, canDrill ? "kpi-cell-drill" : ""].filter(Boolean).join(" ");
+    return (
+      <td
+        className={cls || undefined}
+        title={canDrill ? "Xem chi tiết theo ngày trong kỳ" : undefined}
+        onClick={
+          canDrill
+            ? () => setHistory({ staff: s, colKey })
+            : undefined
+        }
+        role={canDrill ? "button" : undefined}
+        tabIndex={canDrill ? 0 : undefined}
+        onKeyDown={
+          canDrill
+            ? (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setHistory({ staff: s, colKey });
+                }
+              }
+            : undefined
+        }
+      >
+        {children}
+      </td>
+    );
+  }
 
   return (
     <div className="card kpi-period-card" style={{ marginBottom: 16 }}>
@@ -53,6 +235,11 @@ function AttendanceStyleTotalsTable({
       <div className="page-header" style={{ marginBottom: 10 }}>
         <h3 style={{ margin: 0 }}>{sectionTitle}</h3>
       </div>
+      {canDrill ? (
+        <p className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
+          Bấm vào từng ô trong bảng để xem lịch sử theo ngày trong kỳ (dữ liệu chấm công).
+        </p>
+      ) : null}
       <div className="table-scroll kpi-table-scroll">
         <table className="kpi-attendance-table">
           <colgroup>
@@ -90,25 +277,42 @@ function AttendanceStyleTotalsTable({
                 const totalCheckins = m?.totalCheckins ?? 0;
                 return (
                   <tr key={s.id}>
-                    <td>{s.name}</td>
-                    <td>{`${presentDays} ngày có mặt`}</td>
-                    <td>{totalClients}</td>
-                    <td>{totalCheckins}</td>
-                    <td className={kpiCellBgClass(kpiReady, checks, checksActive, "checkin")}>
-                      {formatCheckinRatePct(totalClients, totalCheckins)}
-                    </td>
-                    <td className={kpiCellBgClass(kpiReady, checks, checksActive, "bookings")}>
-                      {m?.totalBookings ?? 0}
-                    </td>
-                    {showWashColumn ? (
-                      <td className={kpiCellBgClass(kpiReady, checks, checksActive, "wash")}>{m?.totalWash ?? 0}</td>
-                    ) : null}
-                    <td className={kpiCellBgClass(kpiReady, checks, checksActive, "products")}>
-                      {m?.totalProducts ?? 0}
-                    </td>
-                    <td className={kpiCellBgClass(kpiReady, checks, checksActive, "revenue")}>
-                      {formatVnd(m?.totalRevenue ?? 0)}
-                    </td>
+                    {tdDrill(undefined, "name", s.name, s)}
+                    {tdDrill(undefined, "status", `${presentDays} ngày có mặt`, s)}
+                    {tdDrill(undefined, "clients", totalClients, s)}
+                    {tdDrill(undefined, "checkins", totalCheckins, s)}
+                    {tdDrill(
+                      kpiCellBgClass(kpiReady, checks, checksActive, "checkin"),
+                      "checkinPct",
+                      formatCheckinRatePct(totalClients, totalCheckins),
+                      s
+                    )}
+                    {tdDrill(
+                      kpiCellBgClass(kpiReady, checks, checksActive, "bookings"),
+                      "bookings",
+                      m?.totalBookings ?? 0,
+                      s
+                    )}
+                    {showWashColumn
+                      ? tdDrill(
+                          kpiCellBgClass(kpiReady, checks, checksActive, "wash"),
+                          "wash",
+                          m?.totalWash ?? 0,
+                          s
+                        )
+                      : null}
+                    {tdDrill(
+                      kpiCellBgClass(kpiReady, checks, checksActive, "products"),
+                      "products",
+                      m?.totalProducts ?? 0,
+                      s
+                    )}
+                    {tdDrill(
+                      kpiCellBgClass(kpiReady, checks, checksActive, "revenue"),
+                      "revenue",
+                      formatVnd(m?.totalRevenue ?? 0),
+                      s
+                    )}
                   </tr>
                 );
               })
@@ -116,6 +320,19 @@ function AttendanceStyleTotalsTable({
           </tbody>
         </table>
       </div>
+      {history ? (
+        <KpiHistoryModal
+          open
+          onClose={() => setHistory(null)}
+          staff={history.staff}
+          rangeFrom={rangeFrom}
+          rangeTo={rangeTo}
+          selectedBranchId={selectedBranchId}
+          periodTitle={periodRangeTitle || ""}
+          highlightCol={DRILL_COL_TO_DETAIL[history.colKey]}
+          isAssistant={isAssistant}
+        />
+      ) : null}
     </div>
   );
 }
@@ -160,6 +377,30 @@ export function KpiWeekAttendanceReport({ data, selectedBranchId }) {
       cancelled = true;
     };
   }, [weekMonday, weekEnd, selectedBranchId, staffVersion]);
+
+  useEffect(() => {
+    if (!selectedBranchId) return;
+    const POLL_MS = 500;
+    async function poll() {
+      if (document.visibilityState !== "visible") return;
+      try {
+        const kpiRows = await api.getKpiWeekReport(weekMonday, weekEnd, selectedBranchId);
+        setKpiRowById(new Map(kpiRows.map((r) => [r.id, r])));
+        setKpiReady(true);
+      } catch {
+        /* giữ bảng cũ khi lỗi mạng */
+      }
+    }
+    const id = setInterval(poll, POLL_MS);
+    function onVis() {
+      if (document.visibilityState === "visible") poll();
+    }
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [weekMonday, weekEnd, selectedBranchId]);
 
   const staffRows = useMemo(() => {
     if (selectedBranchId == null || selectedBranchId === "") return [];
@@ -211,6 +452,10 @@ export function KpiWeekAttendanceReport({ data, selectedBranchId }) {
         kpiReady={kpiReady}
         kpiRowById={kpiRowById}
         period="week"
+        rangeFrom={weekMonday}
+        rangeTo={weekEnd}
+        selectedBranchId={selectedBranchId}
+        periodRangeTitle={`Tuần ${rangeLabel}`}
       />
       <AttendanceStyleTotalsTable
         sectionTitle="Thợ phụ"
@@ -220,6 +465,10 @@ export function KpiWeekAttendanceReport({ data, selectedBranchId }) {
         kpiReady={kpiReady}
         kpiRowById={kpiRowById}
         period="week"
+        rangeFrom={weekMonday}
+        rangeTo={weekEnd}
+        selectedBranchId={selectedBranchId}
+        periodRangeTitle={`Tuần ${rangeLabel}`}
       />
     </>
   );
@@ -262,6 +511,30 @@ export function KpiMonthAttendanceReport({ data, selectedBranchId }) {
     };
   }, [month, selectedBranchId, staffVersion]);
 
+  useEffect(() => {
+    if (!selectedBranchId) return;
+    const POLL_MS = 500;
+    async function poll() {
+      if (document.visibilityState !== "visible") return;
+      try {
+        const kpiRows = await api.getKpiReport(month, selectedBranchId);
+        setKpiRowById(new Map(kpiRows.map((r) => [r.id, r])));
+        setKpiReady(true);
+      } catch {
+        /* giữ bảng cũ */
+      }
+    }
+    const id = setInterval(poll, POLL_MS);
+    function onVis() {
+      if (document.visibilityState === "visible") poll();
+    }
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [month, selectedBranchId]);
+
   const staffRows = useMemo(() => {
     if (selectedBranchId == null || selectedBranchId === "") return [];
     const bid = Number(selectedBranchId);
@@ -284,6 +557,8 @@ export function KpiMonthAttendanceReport({ data, selectedBranchId }) {
     [staffRows]
   );
 
+  const monthRange = useMemo(() => monthStringToIsoRange(month), [month]);
+
   return (
     <>
       <div className="row" style={{ marginBottom: 12 }}>
@@ -297,6 +572,10 @@ export function KpiMonthAttendanceReport({ data, selectedBranchId }) {
         kpiReady={kpiReady}
         kpiRowById={kpiRowById}
         period="month"
+        rangeFrom={monthRange.from}
+        rangeTo={monthRange.to}
+        selectedBranchId={selectedBranchId}
+        periodRangeTitle={`Tháng ${month}`}
       />
       <AttendanceStyleTotalsTable
         sectionTitle="Thợ phụ"
@@ -306,6 +585,10 @@ export function KpiMonthAttendanceReport({ data, selectedBranchId }) {
         kpiReady={kpiReady}
         kpiRowById={kpiRowById}
         period="month"
+        rangeFrom={monthRange.from}
+        rangeTo={monthRange.to}
+        selectedBranchId={selectedBranchId}
+        periodRangeTitle={`Tháng ${month}`}
       />
     </>
   );

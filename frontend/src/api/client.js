@@ -2,9 +2,14 @@ export const API_BASE_URL = "http://localhost:4000";
 const API_URL = `${API_BASE_URL}/api`;
 
 async function request(path, options = {}) {
+  const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
+  // FormData: không set Content-Type để trình duyệt gửi multipart/form-data kèm boundary
   const res = await fetch(`${API_URL}${path}`, {
-    headers: { "Content-Type": "application/json" },
-    ...options
+    ...options,
+    headers: {
+      ...(isFormData ? {} : { "Content-Type": "application/json" }),
+      ...options.headers
+    }
   });
   if (!res.ok) {
     let msg = `API error: ${res.status}`;
@@ -27,13 +32,18 @@ export function getCccdImageUrl(staffId) {
 export const api = {
   getBranches: () => request(`/branches?_t=${Date.now()}`),
   createBranch: (payload) => request("/branches", { method: "POST", body: JSON.stringify(payload) }),
-  deleteBranch: (branchId) => request(`/branches/${branchId}`, { method: "DELETE" }),
+  deleteBranch: (branchId, force = false) => request(`/branches/${branchId}${force ? "?force=true" : ""}`, { method: "DELETE" }),
   getStaff: () => request(`/staff?_t=${Date.now()}`),
   createStaff: (payload) => request("/staff", { method: "POST", body: JSON.stringify(payload) }),
   updateStaff: (id, payload) => request(`/staff/${id}`, { method: "PUT", body: JSON.stringify(payload) }),
   deleteStaff: (id) => request(`/staff/${id}`, { method: "DELETE" }),
-  getStaffPersonalInfo: (branchId, staffId) =>
-    request(`/staff-personal-info?_t=${Date.now()}${branchId ? `&branchId=${branchId}` : ""}${staffId ? `&staffId=${staffId}` : ""}`),
+  getStaffPersonalInfo: (branchId, staffId) => {
+    const q = new URLSearchParams();
+    q.set("_t", String(Date.now()));
+    if (branchId != null && branchId !== "") q.set("branchId", String(branchId));
+    if (staffId != null && staffId !== "") q.set("staffId", String(staffId));
+    return request(`/staff-personal-info?${q.toString()}`);
+  },
   saveStaffPersonalInfo: (payload) => request("/staff-personal-info", { method: "PUT", body: JSON.stringify(payload) }),
   uploadCccdImage: async (staffId, file) => {
     const fd = new FormData();
@@ -56,7 +66,12 @@ export const api = {
       }`
     ),
   saveAttendance: (payload) => request("/attendance", { method: "PUT", body: JSON.stringify(payload) }),
-  getKpiReport: (month, branchId) => request(`/reports/kpi?_t=${Date.now()}&month=${month}${branchId ? `&branchId=${branchId}` : ""}`),
+  getKpiReport: (month, branchId) =>
+    request(
+      `/reports/kpi?_t=${Date.now()}&month=${encodeURIComponent(month)}${
+        branchId != null && branchId !== "" ? `&branchId=${encodeURIComponent(branchId)}` : ""
+      }`
+    ),
   getDashboardStats: (month) => request(`/reports/dashboard?_t=${Date.now()}&month=${month}`),
   getKpiWeekReport: (from, to, branchId) =>
     request(
@@ -64,7 +79,13 @@ export const api = {
         branchId != null && branchId !== "" ? `&branchId=${encodeURIComponent(branchId)}` : ""
       }`
     ),
-  getSalaryReport: (month, branchId) => request(`/reports/salary?_t=${Date.now()}&month=${month}${branchId ? `&branchId=${branchId}` : ""}`),
+  getSalaryReport: (month, branchId) => {
+    const q = new URLSearchParams();
+    q.set("_t", String(Date.now()));
+    if (month) q.set("month", String(month));
+    if (branchId != null && branchId !== "") q.set("branchId", String(branchId));
+    return request(`/reports/salary?${q.toString()}`);
+  },
   applyMonthlyHoldDeductions: (payload) => request("/hold-deductions/apply-month", { method: "POST", body: JSON.stringify(payload) }),
   addSalaryAdjustment: (payload) => request("/salary-adjustments", { method: "POST", body: JSON.stringify(payload) }),
   updateSalaryAdjustment: (id, payload) => request(`/salary-adjustments/${id}`, { method: "PUT", body: JSON.stringify(payload) }),

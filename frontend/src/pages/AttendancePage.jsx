@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
 import { addIsoDays, vietnamTodayIsoDate } from "../utils/vietnamTime";
 import { formatCheckinRatePct, formatViDateShort, fmtMoney } from "../utils/format";
@@ -57,11 +57,14 @@ function CrossBranchPanel({
   data, serviceBranchId, crossBookings, onRefresh,
   dateCross, setDateCross,
   monthCross, setMonthCross,
-  crossViewType, setCrossViewType 
+  crossViewType, setCrossViewType,
+  chemicalMinVnd = 450000
 }) {
   const [staffBranchId, setStaffBranchId] = useState("");
   const [crossModal, setCrossModal] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [editBooking, setEditBooking] = useState(null);
+  const [editLoading, setEditLoading] = useState(false);
 
   const staffOptions = useMemo(() => {
     if (!staffBranchId) return [];
@@ -93,6 +96,55 @@ function CrossBranchPanel({
 
   function closeModal() {
     setCrossModal(null);
+  }
+
+  function openEditModal(b) {
+    const sid = Number(b.staff_id ?? b.staffId);
+    const svc = Number(b.service_branch_id ?? b.serviceBranchId ?? serviceBranchId);
+    setEditBooking({
+      id: b.id,
+      serviceBranchId: Number.isFinite(svc) ? svc : Number(serviceBranchId),
+      staffId: sid,
+      date: b.date,
+      type: b.type === "wash" || b.type === "chemical" || b.type === "product" ? b.type : "chemical",
+      revenue: String(b.revenue ?? ""),
+      note: b.note != null && b.note !== "" ? String(b.note) : "",
+      staffName: b.staff_name ?? ""
+    });
+  }
+
+  function closeEditModal() {
+    setEditBooking(null);
+  }
+
+  async function handleSaveEdit() {
+    if (!editBooking) return;
+    const rev = Math.round(Number(String(editBooking.revenue).replace(/\s/g, "")));
+    if (!Number.isFinite(rev) || rev <= 0) {
+      alert("Doanh thu phải lớn hơn 0.");
+      return;
+    }
+    if (editBooking.type === "chemical" && rev < chemicalMinVnd) {
+      alert(`Hóa chất phải từ ${chemicalMinVnd.toLocaleString("vi-VN")} VND trở lên.`);
+      return;
+    }
+    try {
+      setEditLoading(true);
+      await api.updateCrossBranchBooking(editBooking.id, {
+        serviceBranchId: editBooking.serviceBranchId,
+        staffId: editBooking.staffId,
+        date: editBooking.date,
+        type: editBooking.type,
+        revenue: rev,
+        note: editBooking.note.trim() || null
+      });
+      closeEditModal();
+      onRefresh();
+    } catch (e) {
+      alert(e.message || "Lỗi khi lưu");
+    } finally {
+      setEditLoading(false);
+    }
   }
 
   async function handleSaveModal() {
@@ -211,7 +263,7 @@ function CrossBranchPanel({
                 <th>Chi nhánh thợ</th>
                 <th>Loại lịch</th>
                 <th>Doanh thu</th>
-                <th style={{ width: 120 }}>Hành động</th>
+                <th style={{ width: 160 }}>Hành động</th>
               </tr>
             </thead>
             <tbody>
@@ -223,9 +275,14 @@ function CrossBranchPanel({
                   <td>{b.type === "chemical" ? "Hóa chất" : (b.type === "wash" ? "Gội" : "Sản phẩm")}</td>
                   <td>{b.revenue.toLocaleString("vi-VN")} đ</td>
                   <td>
-                    <button className="icon-btn danger" title="Xóa" onClick={() => handleDelete(b.id)}>
-                      🗑️
-                    </button>
+                    <div className="row" style={{ gap: 6, flexWrap: "nowrap" }}>
+                      <button type="button" className="icon-btn" title="Sửa" onClick={() => openEditModal(b)}>
+                        ✏️
+                      </button>
+                      <button type="button" className="icon-btn danger" title="Xóa" onClick={() => handleDelete(b.id)}>
+                        🗑️
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -343,6 +400,59 @@ function CrossBranchPanel({
             <div className="attendance-modal-actions" style={{ marginTop: 24 }}>
               <button className="secondary" onClick={closeModal}>Hủy</button>
               <button className="primary" onClick={handleSaveModal} disabled={loading}>{loading ? "Đang lưu..." : "Lưu"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editBooking && (
+        <div className="attendance-modal" role="dialog" aria-modal="true" aria-label="Sửa lịch chéo">
+          <button type="button" className="attendance-modal-backdrop" onClick={closeEditModal} />
+          <div className="attendance-modal-panel" style={{ maxWidth: 440 }}>
+            <button type="button" className="attendance-modal-close" onClick={closeEditModal} aria-label="Đóng">
+              ×
+            </button>
+            <h3 className="attendance-modal-title">Sửa lịch chéo</h3>
+            <p className="muted attendance-modal-sub" style={{ marginBottom: 16 }}>
+              {editBooking.staffName} · {formatViDateShort(editBooking.date)}
+            </p>
+            <div className="form-grid" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <label className="field">
+                <span className="muted">Loại lịch</span>
+                <select
+                  value={editBooking.type}
+                  onChange={(e) => setEditBooking((prev) => (prev ? { ...prev, type: e.target.value } : prev))}
+                >
+                  <option value="chemical">Hóa chất</option>
+                  <option value="wash">Gội</option>
+                  <option value="product">Sản phẩm</option>
+                </select>
+              </label>
+              <label className="field">
+                <span className="muted">Doanh thu (VND)</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={editBooking.revenue}
+                  onChange={(e) => setEditBooking((prev) => (prev ? { ...prev, revenue: e.target.value } : prev))}
+                />
+              </label>
+              <label className="field">
+                <span className="muted">Ghi chú</span>
+                <input
+                  type="text"
+                  value={editBooking.note}
+                  onChange={(e) => setEditBooking((prev) => (prev ? { ...prev, note: e.target.value } : prev))}
+                />
+              </label>
+            </div>
+            <div className="attendance-modal-actions" style={{ marginTop: 20 }}>
+              <button type="button" className="secondary" onClick={closeEditModal}>
+                Hủy
+              </button>
+              <button type="button" className="primary" onClick={handleSaveEdit} disabled={editLoading}>
+                {editLoading ? "Đang lưu..." : "Lưu"}
+              </button>
             </div>
           </div>
         </div>
@@ -540,22 +650,54 @@ export function AttendancePage({ data, selectedBranchId }) {
     };
   }, [dateKpi, dateStatus, dateCross, monthCross, crossViewType, selectedBranchId]);
 
-  async function refresh() {
+  async function refreshAttendanceOnly() {
     if (!selectedBranchId) return;
-    const [kpi, st, cb] = await Promise.all([
-      api.getAttendanceByDate(dateKpi, selectedBranchId),
-      api.getAttendanceByDate(dateStatus, selectedBranchId),
-      api.getCrossBranchBookings({
-        serviceBranchId: selectedBranchId,
-        date: crossViewType === "date" ? dateCross : undefined,
-        month: crossViewType === "month" ? monthCross : undefined
-      }),
-      data.reload(true) // Cập nhật ngầm danh sách nhân sự từ server
-    ]);
-    setRowsKpi(kpi);
-    setRowsStatus(st);
-    setCrossBookings(cb);
+    try {
+      const [kpi, st, cb] = await Promise.all([
+        api.getAttendanceByDate(dateKpi, selectedBranchId),
+        api.getAttendanceByDate(dateStatus, selectedBranchId),
+        api.getCrossBranchBookings({
+          serviceBranchId: selectedBranchId,
+          date: crossViewType === "date" ? dateCross : undefined,
+          month: crossViewType === "month" ? monthCross : undefined
+        })
+      ]);
+      setRowsKpi(kpi);
+      setRowsStatus(st);
+      setCrossBookings(cb);
+    } catch {
+      /* lỗi mạng tạm — giữ số hiện tại */
+    }
   }
+
+  async function refresh() {
+    await refreshAttendanceOnly();
+    try {
+      await data.reload(true);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const refreshAttendanceOnlyRef = useRef(refreshAttendanceOnly);
+  refreshAttendanceOnlyRef.current = refreshAttendanceOnly;
+
+  /** Polling nhanh (không gọi reload toàn bộ nhân sự) để thấy thay đổi từ chi nhánh khác gần như tức thì. */
+  useEffect(() => {
+    if (!selectedBranchId) return;
+    const sync = () => {
+      if (document.visibilityState === "visible") refreshAttendanceOnlyRef.current();
+    };
+    document.addEventListener("visibilitychange", sync);
+    const POLL_MS = 500;
+    const id = setInterval(() => {
+      if (document.visibilityState === "visible") refreshAttendanceOnlyRef.current();
+    }, POLL_MS);
+    return () => {
+      document.removeEventListener("visibilitychange", sync);
+      clearInterval(id);
+    };
+  }, [selectedBranchId]);
 
   function closeModal() {
     setModal(null);
@@ -1081,6 +1223,7 @@ export function AttendancePage({ data, selectedBranchId }) {
           setCrossViewType={setCrossViewType}
           crossBookings={crossBookings}
           onRefresh={refresh}
+          chemicalMinVnd={chemicalMinVnd}
         />
       )}
 

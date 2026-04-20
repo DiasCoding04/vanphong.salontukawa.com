@@ -1278,6 +1278,21 @@ label.cccd-file-trigger.is-disabled {
   background: rgba(239, 68, 68, 0.2);
 }
 
+/* Ô KPI tuần/tháng: bấm để xem chi tiết theo ngày */
+.kpi-attendance-table td.kpi-cell-drill {
+  cursor: pointer;
+}
+
+.kpi-attendance-table td.kpi-cell-drill:hover {
+  filter: brightness(1.06);
+}
+
+/* Modal chi tiết: tô cột đang xem */
+.kpi-history-modal-table th.kpi-history-col-highlight,
+.kpi-history-modal-table td.kpi-history-col-highlight {
+  box-shadow: inset 0 0 0 2px rgba(59, 130, 246, 0.65);
+}
+
 /* Cuộn ngang/dọc trong khung (flex:1 trong card bảng) */
 .kpi-manager-grid-wrap {
   overflow: auto;

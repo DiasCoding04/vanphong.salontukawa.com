@@ -126,8 +126,20 @@ function App() {
       await api.deleteBranch(id);
       if (selectedBranchId === id) setSelectedBranchId(null);
       await data.reload();
-    } catch {
-      alert("Không thể xóa chi nhánh có nhân viên.");
+    } catch (e) {
+      if (e.canForce) {
+        if (confirm(e.message)) {
+          try {
+            await api.deleteBranch(id, true);
+            if (selectedBranchId === id) setSelectedBranchId(null);
+            await data.reload();
+          } catch (err) {
+            alert(err.message || "Không thể xóa sạch dữ liệu.");
+          }
+        }
+      } else {
+        alert(e.message || "Lỗi khi xóa chi nhánh.");
+      }
     }
   }
 

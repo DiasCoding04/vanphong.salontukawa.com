@@ -296,8 +296,12 @@ export function PersonalInfoPage({ data, selectedBranchId }) {
         birthDate: birth.day && birth.month && birth.year ? `${birth.day}/${birth.month}/${birth.year}` : "",
         hometown: form.hometown.trim()
       });
-      const updated = await api.getStaffPersonalInfo(selectedBranchId);
-      setRows(updated);
+      try {
+        const updated = await api.getStaffPersonalInfo(selectedBranchId);
+        setRows(updated);
+      } catch (reloadErr) {
+        setError(reloadErr.message ? `Đã lưu nhưng không tải lại danh sách: ${reloadErr.message}` : "Đã lưu nhưng không tải lại danh sách.");
+      }
     } catch (err) {
       setError(err.message);
     } finally {
