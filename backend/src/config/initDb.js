@@ -196,20 +196,13 @@ async function initDb() {
 
   const hasBranches = await get("SELECT COUNT(*) AS total FROM branches");
   if (hasBranches.total === 0) {
-    await run("INSERT INTO branches (name) VALUES (?), (?)", ["Chi nhánh Quận 12", "Chi nhánh Tân Bình"]);
+    // Không tự động tạo chi nhánh mẫu nữa
+    console.log("Database is empty. Please create branches and staff manually.");
   }
 
   const hasStaff = await get("SELECT COUNT(*) AS total FROM staff");
   if (hasStaff.total === 0) {
-    await run(
-      `INSERT INTO staff (name, type, branch_id, base_salary, status, start_date, end_date, account_number, hold_remaining)
-       VALUES
-       ('Nguyễn Văn An', 'main', 1, 5000000, 'working', '2024-01-01', NULL, '001100001', 2000000),
-       ('Trần Thị Bình', 'main', 1, 5500000, 'working', '2024-02-01', NULL, '001100002', 1500000),
-       ('Lê Hoàng Cường', 'assistant', 1, 4000000, 'working', '2024-03-01', NULL, '001100003', 1000000),
-       ('Phạm Thị Dung', 'assistant', 2, 4200000, 'working', '2024-01-15', NULL, '001100004', 1200000),
-       ('Hoàng Văn Em', 'main', 2, 5000000, 'working', '2024-04-01', NULL, '001100005', 1800000)`
-    );
+    // Không tự động tạo nhân viên mẫu nữa
   }
 
   await run(`CREATE TABLE IF NOT EXISTS manager_kpi_staff (

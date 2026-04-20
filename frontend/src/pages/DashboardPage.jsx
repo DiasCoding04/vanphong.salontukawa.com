@@ -4,6 +4,17 @@ import { currentMonth, fmtMoney, formatViDateShort } from "../utils/format";
 import { getMondaySundayIsoWeekContaining, vietnamTodayIsoDate, addIsoDays } from "../utils/vietnamTime";
 
 function SimpleBarChart({ data, xKey, yKey, title, color = "#f0c040" }) {
+  if (!data || data.length === 0) {
+    return (
+      <div className="simple-chart-container">
+        <h4>{title}</h4>
+        <div className="table-scroll" style={{ minHeight: 200, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", fontSize: 14 }}>
+          Chưa có dữ liệu
+        </div>
+      </div>
+    );
+  }
+
   const maxVal = Math.max(...data.map(d => d[yKey] || 0), 1);
   const height = 200;
   const barWidth = 40;
@@ -59,13 +70,25 @@ function SimpleBarChart({ data, xKey, yKey, title, color = "#f0c040" }) {
 }
 
 function SimpleLineChart({ data, xKey, yKey, title, color = "#60a5fa" }) {
+  if (!data || data.length === 0) {
+    return (
+      <div className="simple-chart-container">
+        <h4>{title}</h4>
+        <div className="table-scroll" style={{ minHeight: 200, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", fontSize: 14 }}>
+          Chưa có dữ liệu theo ngày trong tháng này
+        </div>
+      </div>
+    );
+  }
+
   const maxVal = Math.max(...data.map(d => d[yKey] || 0), 1);
   const height = 200;
   const padding = 40;
   const width = Math.max(500, data.length * 40 + padding * 2);
-  
+  const xSpan = Math.max(data.length - 1, 1);
+
   const points = data.map((d, i) => {
-    const x = padding + i * ((width - padding * 2) / (data.length - 1 || 1));
+    const x = padding + i * ((width - padding * 2) / xSpan);
     const y = height - (d[yKey] / maxVal) * height + 20;
     return `${x},${y}`;
   }).join(" ");
@@ -84,7 +107,7 @@ function SimpleLineChart({ data, xKey, yKey, title, color = "#60a5fa" }) {
             strokeLinecap="round"
           />
           {data.map((d, i) => {
-            const x = padding + i * ((width - padding * 2) / (data.length - 1 || 1));
+            const x = padding + i * ((width - padding * 2) / xSpan);
             const y = height - (d[yKey] / maxVal) * height + 20;
             return (
               <g key={i}>
@@ -400,7 +423,11 @@ export function DashboardPage({ data }) {
               </div>
             </div>
 
-            {stats && (
+            {stats && data.branches.length === 0 ? (
+              <p className="muted" style={{ textAlign: "center", padding: "24px 12px" }}>
+                Chưa có chi nhánh — thêm chi nhánh (mục lọc / quản lý chi nhánh) để xem biểu đồ doanh thu và sản phẩm theo chi nhánh, cùng biến động theo ngày.
+              </p>
+            ) : stats ? (
               <div className="dashboard-charts-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
                 <div className="chart-item card" style={{ background: "rgba(0,0,0,0.1)", marginBottom: 0 }}>
                   <SimpleBarChart 
@@ -430,7 +457,7 @@ export function DashboardPage({ data }) {
                   />
                 </div>
               </div>
-            )}
+            ) : null}
 
             {data.error ? <p className="muted">{data.error}</p> : null}
           </div>

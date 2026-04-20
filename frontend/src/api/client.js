@@ -12,14 +12,11 @@ async function request(path, options = {}) {
     }
   });
   if (!res.ok) {
-    let msg = `API error: ${res.status}`;
-    try {
-      const j = await res.json();
-      if (j.message) msg = j.message;
-    } catch {
-      // ignore
-    }
-    throw new Error(msg);
+    const errData = await res.json().catch(() => ({}));
+    const error = new Error(errData.message || `API error: ${res.status}`);
+    // Gắn thêm các thuộc tính mở rộng từ server (như canForce) vào đối tượng Error
+    Object.assign(error, errData);
+    throw error;
   }
   if (res.status === 204) return null;
   return res.json();

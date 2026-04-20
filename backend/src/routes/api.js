@@ -184,18 +184,20 @@ router.delete("/branches/:id", async (req, res, next) => {
   try {
     const branchId = Number(req.params.id);
     const force = req.query.force === 'true';
+    console.log(`[DELETE] Branch ${branchId}, force=${force}`);
     
-    // 1. Kiểm tra xem có nhân sự nào thuộc chi nhánh này không
+    // 1. Kiểm tra nhân sự
     const staffCount = await get("SELECT COUNT(*) AS total FROM staff WHERE branch_id = ?", [branchId]);
     
-    // 2. Kiểm tra xem có lịch đặt chéo nào liên quan đến chi nhánh này không
+    // 2. Kiểm tra lịch đặt chéo (với tư cách là chi nhánh tiếp nhận)
     const bookingCount = await get("SELECT COUNT(*) AS total FROM cross_branch_bookings WHERE service_branch_id = ?", [branchId]);
 
     if (!force && (staffCount.total > 0 || bookingCount.total > 0)) {
-      let message = "Không thể xóa chi nhánh này vì:";
-      if (staffCount.total > 0) message += `\n- Còn ${staffCount.total} nhân sự đang thuộc chi nhánh này.`;
-      if (bookingCount.total > 0) message += `\n- Còn ${bookingCount.total} dữ liệu lịch đặt chéo liên quan.`;
-      message += "\n\nBạn có muốn xóa sạch TOÀN BỘ dữ liệu liên quan để xóa chi nhánh này không?";
+      let message = "⚠️ KHÔNG THỂ XÓA CHI NHÁNH NÀY\n\nLý do:";
+      if (staffCount.total > 0) message += `\n- Có ${staffCount.total} nhân sự đang liên kết.`;
+      if (bookingCount.total > 0) message += `\n- Có ${bookingCount.total} bản ghi lịch đặt chéo.`;
+      message += "\n\nBạn có muốn HỆ THỐNG TỰ ĐỘNG XÓA SẠCH toàn bộ dữ liệu này để xóa chi nhánh không?";
+      
       return res.status(400).json({ 
         message,
         canForce: true
@@ -204,7 +206,8 @@ router.delete("/branches/:id", async (req, res, next) => {
 
     await transaction(async () => {
       if (force) {
-        // Nếu force = true, xóa sạch mọi thứ liên quan đến các nhân sự trong chi nhánh này
+        console.log(`[FORCE DELETE] Cleaning up branch ${branchId}...`);
+        // Lấy danh sách staff trước khi xóa
         const staffInBranch = await all("SELECT id FROM staff WHERE branch_id = ?", [branchId]);
         for (const s of staffInBranch) {
           const sid = s.id;
@@ -218,15 +221,17 @@ router.delete("/branches/:id", async (req, res, next) => {
           await run("DELETE FROM cross_branch_bookings WHERE staff_id = ?", [sid]);
           await run("DELETE FROM staff WHERE id = ?", [sid]);
         }
-        // Xóa nốt các lịch đặt chéo mà chi nhánh này là nơi tiếp nhận
+        // Xóa nốt các lịch đặt chéo mà chi nhánh này là nơi tiếp nhận (cho thợ từ chi nhánh khác)
         await run("DELETE FROM cross_branch_bookings WHERE service_branch_id = ?", [branchId]);
       }
       
       await run("DELETE FROM branches WHERE id = ?", [branchId]);
+      console.log(`[DELETE] Branch ${branchId} deleted successfully.`);
     });
 
     res.status(204).send();
   } catch (error) {
+    console.error("[DELETE ERROR]", error);
     next(error);
   }
 });
@@ -1541,26 +1546,54 @@ router.get("/reports/dashboard", async (req, res, next) => {
     const { month } = req.query; // YYYY-MM
     const currentMonthStr = month || new Date().toISOString().slice(0, 7);
 
-    // 1. Revenue and Products by Branch for the month
-    const branchStats = await all(`
-      SELECT 
-        b.id as branch_id, 
-        b.name as branch_name,
-        SUM(a.revenue) as total_revenue,
-        SUM(a.products) as total_products
-      FROM branches b
-      LEFT JOIN staff s ON s.branch_id = b.id
-      LEFT JOIN attendance a ON a.staff_id = s.id AND a.date LIKE ?
-      GROUP BY b.id
-    `, [`${currentMonthStr}-%`]);
+    // 1. Lấy tất cả chi nhánh
+    const branches = await all("SELECT id, name FROM branches");
+    const branchStats = [];
 
-    // 2. Daily Revenue for all branches for the month
+    for (const b of branches) {
+      // Doanh thu từ thợ nhà (tổng attendance.revenue của thợ thuộc chi nhánh này)
+      const homeStaffAttendance = await get(`
+        SELECT SUM(a.revenue) as rev, SUM(a.products) as prod
+        FROM attendance a
+        JOIN staff s ON s.id = a.staff_id
+        WHERE s.branch_id = ? AND a.date LIKE ?
+      `, [b.id, `${currentMonthStr}-%`]);
+
+      // Trừ đi doanh thu mà thợ nhà mình đi làm ở chi nhánh khác (cross-bookings)
+      const homeStaffCrossOut = await get(`
+        SELECT SUM(revenue) as rev, SUM(CASE WHEN type = 'product' THEN 1 ELSE 0 END) as prod
+        FROM cross_branch_bookings
+        WHERE staff_id IN (SELECT id FROM staff WHERE branch_id = ?) 
+        AND date LIKE ?
+      `, [b.id, `${currentMonthStr}-%`]);
+
+      // Cộng thêm doanh thu từ thợ chi nhánh khác đến làm tại đây
+      const guestStaffCrossIn = await get(`
+        SELECT SUM(revenue) as rev, SUM(CASE WHEN type = 'product' THEN 1 ELSE 0 END) as prod
+        FROM cross_branch_bookings
+        WHERE service_branch_id = ? AND date LIKE ?
+      `, [b.id, `${currentMonthStr}-%`]);
+
+      const totalRevenue = (homeStaffAttendance.rev || 0) - (homeStaffCrossOut.rev || 0) + (guestStaffCrossIn.rev || 0);
+      const totalProducts = (homeStaffAttendance.prod || 0) - (homeStaffCrossOut.prod || 0) + (guestStaffCrossIn.prod || 0);
+
+      branchStats.push({
+        branch_id: b.id,
+        branch_name: b.name,
+        total_revenue: totalRevenue,
+        total_products: totalProducts
+      });
+    }
+
+    // 2. Doanh thu theo ngày — chỉ từ chấm công của nhân viên thuộc chi nhánh hiện có (trùng phạm vi với phần trên)
     const dailyStats = await all(`
       SELECT 
         a.date,
         SUM(a.revenue) as total_revenue,
         SUM(a.products) as total_products
       FROM attendance a
+      INNER JOIN staff s ON s.id = a.staff_id
+      INNER JOIN branches b ON b.id = s.branch_id
       WHERE a.date LIKE ?
       GROUP BY a.date
       ORDER BY a.date ASC
@@ -1572,6 +1605,7 @@ router.get("/reports/dashboard", async (req, res, next) => {
       dailyStats
     });
   } catch (error) {
+    console.error("Dashboard error:", error);
     next(error);
   }
 });
