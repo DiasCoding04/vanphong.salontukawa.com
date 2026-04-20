@@ -189,6 +189,11 @@ export function DashboardPage({ data }) {
   const [weekKpi, setWeekKpi] = useState([]);
   const [monthKpi, setMonthKpi] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [staffVersion, setStaffVersion] = useState(0);
+
+  useEffect(() => {
+    setStaffVersion(v => v + 1);
+  }, [data.reloadVersion]);
 
   useEffect(() => {
     if (activeTab === "overview") {
@@ -206,7 +211,6 @@ export function DashboardPage({ data }) {
       setLoading(true);
       api.getKpiWeekReport(weekRange.from, weekRange.to)
         .then(res => {
-          // Nạp thêm tên chi nhánh vào data
           const enriched = res.map(s => {
             const b = data.branches.find(br => br.id === s.branch_id);
             return { ...s, branch_name: b ? b.name : "" };
@@ -234,7 +238,7 @@ export function DashboardPage({ data }) {
           setLoading(false);
         });
     }
-  }, [month, weekRange, activeTab, data.branches]);
+  }, [month, weekRange, activeTab, data.branches, staffVersion]);
 
   const activeStaff = data.staff.filter((s) => s.status === "working").length;
   const mainStaff = data.staff.filter((s) => s.type === "main").length;

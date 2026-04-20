@@ -1076,8 +1076,6 @@ label.cccd-file-trigger.is-disabled {
   background: var(--border-main);
   border-radius: 3px;
 }
-  vertical-align: middle;
-}
 
 .yesterday-report-table .yesterday-report-select,
 .yesterday-report-table .yesterday-report-penalty {

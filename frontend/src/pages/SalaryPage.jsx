@@ -169,6 +169,7 @@ export function SalaryPage({ selectedBranchId }) {
           <div className="card" style={{ marginBottom: 24 }}>
             <div className="row">
               <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
+              <button className="secondary" onClick={() => load()}>🔄 Làm mới</button>
               <button
                 className="secondary"
                 disabled={isApplyingHold}

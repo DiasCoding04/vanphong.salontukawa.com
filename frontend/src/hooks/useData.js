@@ -6,25 +6,31 @@ export function useData() {
   const [branches, setBranches] = useState([]);
   const [staff, setStaff] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [error, setError] = useState(null);
+  const [reloadVersion, setReloadVersion] = useState(0);
 
-  const reload = useCallback(async () => {
+  const reload = async (silent = false) => {
+    if (!silent) setLoading(true);
+    setError(null);
     try {
-      setLoading(true);
-      const [branchRows, staffRows] = await Promise.all([api.getBranches(), api.getStaff()]);
-      setBranches(branchRows);
-      setStaff(staffRows);
-      setError("");
-    } catch (err) {
-      setError(err.message);
+      const [b, s] = await Promise.all([
+        api.getBranches(),
+        api.getStaff()
+      ]);
+      setBranches(b);
+      setStaff(s);
+      setReloadVersion(v => v + 1);
+    } catch (e) {
+      console.error("Lỗi khi tải dữ liệu:", e);
+      setError(e.message || "Không thể tải dữ liệu từ máy chủ");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
-  }, []);
+  };
 
   useEffect(() => {
     reload();
-  }, [reload]);
+  }, []);
 
-  return { branches, staff, loading, error, reload };
+  return { branches, staff, loading, error, reload, reloadVersion };
 }

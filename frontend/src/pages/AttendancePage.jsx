@@ -549,7 +549,8 @@ export function AttendancePage({ data, selectedBranchId }) {
         serviceBranchId: selectedBranchId,
         date: crossViewType === "date" ? dateCross : undefined,
         month: crossViewType === "month" ? monthCross : undefined
-      })
+      }),
+      data.reload(true) // Cập nhật ngầm danh sách nhân sự từ server
     ]);
     setRowsKpi(kpi);
     setRowsStatus(st);

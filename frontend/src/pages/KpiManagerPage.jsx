@@ -111,6 +111,7 @@ export function KpiManagerPage({ data, selectedBranchId }) {
       });
       setList((prev) => [...prev, row].sort((a, b) => a.name.localeCompare(b.name, "vi")));
       setPickId("");
+      await data.reload(true); // Đồng bộ danh sách nhân sự ngầm
     } catch (e) {
       alert(e.message || "Không thêm được");
     }
@@ -121,6 +122,7 @@ export function KpiManagerPage({ data, selectedBranchId }) {
     try {
       await api.removeManagerKpiStaff(id);
       setList((prev) => prev.filter((r) => r.id !== id));
+      await data.reload(true); // Đồng bộ danh sách nhân sự ngầm
     } catch (e) {
       alert(e.message || "Không xóa được");
     }

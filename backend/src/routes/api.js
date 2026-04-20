@@ -76,7 +76,7 @@ async function getStaffKpiMap(monthOrRange, staffRows) {
   if (!monthOrRange || staffRows.length === 0) return new Map();
   
   let from, to;
-  if (monthOrRange.includes("-") && monthOrRange.length === 7) {
+  if (typeof monthOrRange === "string" && monthOrRange.includes("-") && monthOrRange.length === 7) {
     // Nếu là định dạng YYYY-MM
     const range = parseMonthRange(monthOrRange);
     from = range.from;
@@ -242,14 +242,12 @@ router.put("/staff/:id", async (req, res, next) => {
 
 router.delete("/staff/:id", async (req, res, next) => {
   try {
-    const { id } = req.params;
+    const id = Number(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "ID không hợp lệ" });
 
     await transaction(async () => {
-      // Xóa tất cả dữ liệu liên quan theo thứ tự ngược lại của các ràng buộc FK
-      // 1. Xóa các bản ghi phụ thuộc vào attendance và daily_reports nhưng có staff_id
+      // 1. Xóa các bản ghi phụ thuộc có staff_id
       await run("DELETE FROM salary_adjustments WHERE staff_id = ?", [id]);
-      
-      // 2. Xóa các bản ghi trong các bảng khác có staff_id
       await run("DELETE FROM attendance WHERE staff_id = ?", [id]);
       await run("DELETE FROM daily_reports WHERE staff_id = ?", [id]);
       await run("DELETE FROM hold_deductions WHERE staff_id = ?", [id]);
@@ -258,8 +256,11 @@ router.delete("/staff/:id", async (req, res, next) => {
       await run("DELETE FROM manager_kpi_staff WHERE staff_id = ?", [id]);
       await run("DELETE FROM cross_branch_bookings WHERE staff_id = ?", [id]);
       
-      // 3. Cuối cùng xóa bản ghi trong bảng staff
-      await run("DELETE FROM staff WHERE id = ?", [id]);
+      // 2. Cuối cùng xóa bản ghi trong bảng staff
+      const result = await run("DELETE FROM staff WHERE id = ?", [id]);
+      if (result.changes === 0) {
+        throw new Error("Không tìm thấy nhân viên để xóa");
+      }
     });
     
     res.status(204).send();
@@ -275,23 +276,34 @@ router.get("/attendance", async (req, res, next) => {
     let query = `
       SELECT a.* FROM attendance a
       JOIN staff s ON s.id = a.staff_id
-      WHERE 1 = 1
+      WHERE 1=1
     `;
     const params = [];
+    let pStart, pEnd;
     if (from && to) {
+      pStart = from;
+      pEnd = to;
       query += " AND a.date >= ? AND a.date <= ?";
       params.push(from, to);
     } else if (date) {
+      pStart = date;
+      pEnd = date;
       query += " AND a.date = ?";
       params.push(date);
     } else if (month) {
-      const { from, to } = parseMonthRange(month);
+      const { from: mf, to: mt } = parseMonthRange(month);
+      pStart = mf;
+      pEnd = mt;
       query += " AND a.date >= ? AND a.date <= ?";
-      params.push(from, to);
+      params.push(mf, mt);
     }
+
     if (branchId) {
-      query += " AND s.branch_id = ?";
-      params.push(branchId);
+      query += ` AND (s.branch_id = ? OR EXISTS (
+        SELECT 1 FROM cross_branch_bookings cbb 
+        WHERE cbb.staff_id = a.staff_id AND cbb.date = a.date AND cbb.service_branch_id = ?
+      ))`;
+      params.push(branchId, branchId);
     }
     query += " AND a.date >= s.start_date AND (s.end_date IS NULL OR s.end_date = '' OR a.date <= s.end_date)";
     query += " ORDER BY a.date DESC, a.staff_id";
@@ -369,8 +381,6 @@ router.put("/attendance", async (req, res, next) => {
       }
     }
 
-    const present = absent ? 0 : 1;
-
     const CHEMICAL_MIN_VND = 450000;
     /** Mỗi dòng gội có doanh thu từ mức này trở lên được tính 2 lịch (thay vì 1). */
     const WASH_DOUBLE_COUNT_FROM_VND = 350000;
@@ -406,6 +416,9 @@ router.put("/attendance", async (req, res, next) => {
     const cbChemical = cbBookings.filter(b => b.type === 'chemical');
     const cbWash = cbBookings.filter(b => b.type === 'wash');
     const cbProduct = cbBookings.filter(b => b.type === 'product');
+
+    // Nếu có lịch chéo, nhân viên phải được coi là có mặt (present = 1)
+    const present = (absent && cbBookings.length === 0) ? 0 : 1;
 
     const bookings = chemical.length + cbChemical.length;
     const wash =
@@ -456,6 +469,9 @@ router.put("/attendance", async (req, res, next) => {
       
       const row = await get("SELECT id FROM attendance WHERE staff_id = ? AND date = ?", [staffId, date]);
       
+      // Xóa các khoản phạt cũ liên quan đến attendance này (bao gồm cả đi muộn)
+      // Chúng ta chỉ xóa các khoản phạt đi muộn tự động.
+      // Các khoản phạt thủ công khác người dùng có thể đã thêm qua modal status.
       await run(
         "DELETE FROM salary_adjustments WHERE attendance_id = ? AND type = 'penalty' AND note LIKE 'Đi muộn%'", 
         [row.id]
@@ -509,10 +525,11 @@ router.get("/cross-branch-bookings", async (req, res, next) => {
 
 router.post("/cross-branch-bookings", async (req, res, next) => {
   try {
-    const { serviceBranchId, staffId, date, chemicalBookings = [], washBookings = [], productBookings = [] } = req.body;
-    if (!serviceBranchId || !staffId || !date) {
+    const { serviceBranchId, staffId: rawStaffId, date, chemicalBookings = [], washBookings = [], productBookings = [] } = req.body;
+    if (!serviceBranchId || !rawStaffId || !date) {
       return res.status(400).json({ message: "Thiếu dữ liệu bắt buộc" });
     }
+    const staffId = Number(rawStaffId);
 
     const staff = await get("SELECT type FROM staff WHERE id = ?", [staffId]);
     if (!staff) return res.status(404).json({ message: "Không tìm thấy thợ" });
@@ -525,6 +542,7 @@ router.post("/cross-branch-bookings", async (req, res, next) => {
     let addedChemical = 0;
     let addedWashVal = 0;
     let addedProducts = 0;
+    let totalBookingsCount = 0;
 
     // Validate
     for (const b of chemicalBookings) {
@@ -532,18 +550,21 @@ router.post("/cross-branch-bookings", async (req, res, next) => {
       if (!Number.isFinite(rev) || rev < chemicalMinVnd) {
         return res.status(400).json({ message: `Hóa chất phải >= ${chemicalMinVnd.toLocaleString("vi-VN")} VND` });
       }
+      totalBookingsCount++;
     }
     for (const b of washBookings) {
       const rev = Number(b.revenue);
       if (!Number.isFinite(rev) || rev <= 0) {
         return res.status(400).json({ message: "Gội phải > 0 VND" });
       }
+      totalBookingsCount++;
     }
     for (const b of productBookings) {
       const rev = Number(b.revenue);
       if (!Number.isFinite(rev) || rev <= 0) {
         return res.status(400).json({ message: "Sản phẩm phải > 0 VND" });
       }
+      totalBookingsCount++;
     }
 
     // Insert and Update attendance in a transaction
@@ -581,16 +602,18 @@ router.post("/cross-branch-bookings", async (req, res, next) => {
       }
 
       // Update attendance
-      if (addedChemical > 0 || washBookings.length > 0 || addedProducts > 0) {
+      if (totalBookingsCount > 0) {
         await run(`
           INSERT INTO attendance (staff_id, date, present, bookings, total_clients, checkins, products, revenue, wash, chemical_bookings_json, wash_bookings_json)
-          VALUES (?, ?, 1, ?, 0, 0, ?, ?, ?, '[]', '[]')
+          VALUES (?, ?, 1, ?, ?, 0, ?, ?, ?, '[]', '[]')
           ON CONFLICT(staff_id, date) DO UPDATE SET
+            present = 1,
             bookings = bookings + excluded.bookings,
+            total_clients = total_clients + excluded.total_clients,
             revenue = revenue + excluded.revenue,
             wash = wash + excluded.wash,
             products = products + excluded.products
-        `, [staffId, date, addedChemical, addedProducts, totalRevenue, addedWashVal]);
+        `, [staffId, date, addedChemical, totalBookingsCount, addedProducts, totalRevenue, addedWashVal]);
       }
     });
 
@@ -675,21 +698,21 @@ router.delete("/cross-branch-bookings/:id", async (req, res, next) => {
     const row = await get("SELECT * FROM cross_branch_bookings WHERE id = ?", [id]);
     if (!row) return res.status(404).json({ message: "Không tìm thấy" });
 
-    await run("DELETE FROM cross_branch_bookings WHERE id = ?", [id]);
-
     const staff = await get("SELECT type FROM staff WHERE id = ?", [row.staff_id]);
+    if (!staff) return res.status(404).json({ message: "Không tìm thấy nhân sự liên quan" });
+
+    const kpiConfig = JSON.parse((await get("SELECT config_json FROM kpi_config WHERE id = 1")).config_json);
+    const washDoubleCountFromVnd = kpiConfig.washDoubleCountFromVnd || 350000;
+    
     const isWash = row.type === 'wash';
     const isChem = row.type === 'chemical';
     const isProd = row.type === 'product';
     
-    const kpiConfig = JSON.parse((await get("SELECT config_json FROM kpi_config WHERE id = 1")).config_json);
-    const washDoubleCountFromVnd = kpiConfig.washDoubleCountFromVnd || 350000;
     const washCount = (isWash && row.revenue >= washDoubleCountFromVnd) ? 2 : (isWash ? 1 : 0);
     const washVal = (staff.type === "assistant" && isWash) ? washCount : 0;
     const bookVal = isChem ? 1 : 0;
     const prodVal = isProd ? 1 : 0;
 
-    // Trừ đi trong attendance in a transaction
     await transaction(async () => {
       await run("DELETE FROM cross_branch_bookings WHERE id = ?", [id]);
 
@@ -1173,20 +1196,26 @@ router.get("/reports/kpi", async (req, res, next) => {
     const { from, to } = parseMonthRange(month);
     const staffRows = branchId
       ? await all(
-          `SELECT * FROM staff s
-           WHERE s.branch_id = ? AND ${overlapsEmploymentClause("?", "?")}
+          `SELECT DISTINCT s.* FROM staff s
+           WHERE (s.branch_id = ? OR EXISTS (
+             SELECT 1 FROM cross_branch_bookings cbb 
+             WHERE cbb.staff_id = s.id AND cbb.service_branch_id = ? AND cbb.date >= ? AND cbb.date <= ?
+           )) AND ${overlapsEmploymentClause("?", "?")}
            ORDER BY s.id`,
-          [branchId, to, from]
+          [branchId, branchId, from, to, to, from]
         )
       : await all(`SELECT * FROM staff s WHERE ${overlapsEmploymentClause("?", "?")} ORDER BY s.id`, [to, from]);
     const attendanceRows = await all(
       `SELECT a.* FROM attendance a
        JOIN staff s ON s.id = a.staff_id
        WHERE a.date >= ? AND a.date <= ?
-         ${branchId ? "AND s.branch_id = ?" : ""}
+         ${branchId ? `AND (s.branch_id = ? OR EXISTS (
+           SELECT 1 FROM cross_branch_bookings cbb 
+           WHERE cbb.staff_id = a.staff_id AND cbb.date = a.date AND cbb.service_branch_id = ?
+         ))` : ""}
          AND a.date >= s.start_date
          AND (s.end_date IS NULL OR s.end_date = '' OR a.date <= s.end_date)`,
-      branchId ? [from, to, branchId] : [from, to]
+      branchId ? [from, to, branchId, branchId] : [from, to]
     );
     const kpiConfig = JSON.parse((await get("SELECT config_json FROM kpi_config WHERE id = 1")).config_json);
     const staffKpiMap = await getStaffKpiMap(month, staffRows);
@@ -1203,25 +1232,28 @@ router.get("/reports/kpi-week", async (req, res, next) => {
     if (!from || !to) {
       return res.status(400).json({ message: "Query from and to (YYYY-MM-DD) are required" });
     }
-    /* Tổng chỉ số = đúng [from, to] (cả tuần). KPI tuần độc lập KPI tháng: không dùng tháng của `to`
-     * (Chủ nhật) để nạp staff_kpi_settings — khi tuần cắt 2 tháng, neo theo tháng chứa Thứ Hai (`from`). */
-    const staffKpiLookupMonth = from.slice(0, 7);
     const staffRows = branchId
       ? await all(
-          `SELECT * FROM staff s
-           WHERE s.branch_id = ? AND ${overlapsEmploymentClause("?", "?")}
+          `SELECT DISTINCT s.* FROM staff s
+           WHERE (s.branch_id = ? OR EXISTS (
+             SELECT 1 FROM cross_branch_bookings cbb 
+             WHERE cbb.staff_id = s.id AND cbb.service_branch_id = ? AND cbb.date >= ? AND cbb.date <= ?
+           )) AND ${overlapsEmploymentClause("?", "?")}
            ORDER BY s.id`,
-          [branchId, to, from]
+          [branchId, branchId, from, to, to, from]
         )
       : await all(`SELECT * FROM staff s WHERE ${overlapsEmploymentClause("?", "?")} ORDER BY s.id`, [to, from]);
     const attendanceRows = await all(
       `SELECT a.* FROM attendance a
        JOIN staff s ON s.id = a.staff_id
        WHERE a.date >= ? AND a.date <= ?
-         ${branchId ? "AND s.branch_id = ?" : ""}
+         ${branchId ? `AND (s.branch_id = ? OR EXISTS (
+           SELECT 1 FROM cross_branch_bookings cbb 
+           WHERE cbb.staff_id = a.staff_id AND cbb.date = a.date AND cbb.service_branch_id = ?
+         ))` : ""}
          AND a.date >= s.start_date
          AND (s.end_date IS NULL OR s.end_date = '' OR a.date <= s.end_date)`,
-      branchId ? [from, to, branchId] : [from, to]
+      branchId ? [from, to, branchId, branchId] : [from, to]
     );
     const kpiConfig = JSON.parse((await get("SELECT config_json FROM kpi_config WHERE id = 1")).config_json);
     const staffKpiMap = await getStaffKpiMap({ from, to }, staffRows);
@@ -1238,26 +1270,35 @@ router.get("/reports/salary", async (req, res, next) => {
     const { from, to } = parseMonthRange(month);
     const staffRows = branchId
       ? await all(
-          `SELECT * FROM staff s
-           WHERE s.branch_id = ? AND ${overlapsEmploymentClause("?", "?")}
+          `SELECT DISTINCT s.* FROM staff s
+           WHERE (s.branch_id = ? OR EXISTS (
+             SELECT 1 FROM cross_branch_bookings cbb 
+             WHERE cbb.staff_id = s.id AND cbb.service_branch_id = ? AND cbb.date >= ? AND cbb.date <= ?
+           )) AND ${overlapsEmploymentClause("?", "?")}
            ORDER BY s.id`,
-          [branchId, to, from]
+          [branchId, branchId, from, to, to, from]
         )
       : await all(`SELECT * FROM staff s WHERE ${overlapsEmploymentClause("?", "?")} ORDER BY s.id`, [to, from]);
     const attendanceRows = await all(
       `SELECT a.* FROM attendance a
        JOIN staff s ON s.id = a.staff_id
        WHERE a.date >= ? AND a.date <= ?
-         ${branchId ? "AND s.branch_id = ?" : ""}
+         ${branchId ? `AND (s.branch_id = ? OR EXISTS (
+           SELECT 1 FROM cross_branch_bookings cbb 
+           WHERE cbb.staff_id = a.staff_id AND cbb.date = a.date AND cbb.service_branch_id = ?
+         ))` : ""}
          AND a.date >= s.start_date
          AND (s.end_date IS NULL OR s.end_date = '' OR a.date <= s.end_date)`,
-      branchId ? [from, to, branchId] : [from, to]
+      branchId ? [from, to, branchId, branchId] : [from, to]
     );
     const adjustments = await all(
       `SELECT sa.* FROM salary_adjustments sa
        JOIN staff s ON s.id = sa.staff_id
-       WHERE sa.month = ? ${branchId ? "AND s.branch_id = ?" : ""}`,
-      branchId ? [month, branchId] : [month]
+       WHERE sa.month = ? ${branchId ? `AND (s.branch_id = ? OR EXISTS (
+         SELECT 1 FROM cross_branch_bookings cbb 
+         WHERE cbb.staff_id = sa.staff_id AND cbb.service_branch_id = ? AND cbb.date LIKE ?
+       ))` : ""}`,
+      branchId ? [month, branchId, branchId, `${month}-%`] : [month]
     );
     const kpiConfig = JSON.parse((await get("SELECT config_json FROM kpi_config WHERE id = 1")).config_json);
     const staffKpiMap = await getStaffKpiMap(month, staffRows);
@@ -1278,26 +1319,35 @@ router.post("/hold-deductions/apply-month", async (req, res, next) => {
     const { from, to } = parseMonthRange(month);
     const staffRows = branchId
       ? await all(
-          `SELECT * FROM staff s
-           WHERE s.branch_id = ? AND ${overlapsEmploymentClause("?", "?")}
+          `SELECT DISTINCT s.* FROM staff s
+           WHERE (s.branch_id = ? OR EXISTS (
+             SELECT 1 FROM cross_branch_bookings cbb 
+             WHERE cbb.staff_id = s.id AND cbb.service_branch_id = ? AND cbb.date >= ? AND cbb.date <= ?
+           )) AND ${overlapsEmploymentClause("?", "?")}
            ORDER BY s.id`,
-          [branchId, to, from]
+          [branchId, branchId, from, to, to, from]
         )
       : await all(`SELECT * FROM staff s WHERE ${overlapsEmploymentClause("?", "?")} ORDER BY s.id`, [to, from]);
     const attendanceRows = await all(
       `SELECT a.* FROM attendance a
        JOIN staff s ON s.id = a.staff_id
        WHERE a.date >= ? AND a.date <= ?
-         ${branchId ? "AND s.branch_id = ?" : ""}
+         ${branchId ? `AND (s.branch_id = ? OR EXISTS (
+           SELECT 1 FROM cross_branch_bookings cbb 
+           WHERE cbb.staff_id = a.staff_id AND cbb.date = a.date AND cbb.service_branch_id = ?
+         ))` : ""}
          AND a.date >= s.start_date
          AND (s.end_date IS NULL OR s.end_date = '' OR a.date <= s.end_date)`,
-      branchId ? [from, to, branchId] : [from, to]
+      branchId ? [from, to, branchId, branchId] : [from, to]
     );
     const adjustments = await all(
       `SELECT sa.* FROM salary_adjustments sa
        JOIN staff s ON s.id = sa.staff_id
-       WHERE sa.month = ? ${branchId ? "AND s.branch_id = ?" : ""}`,
-      branchId ? [month, branchId] : [month]
+       WHERE sa.month = ? ${branchId ? `AND (s.branch_id = ? OR EXISTS (
+         SELECT 1 FROM cross_branch_bookings cbb 
+         WHERE cbb.staff_id = sa.staff_id AND cbb.service_branch_id = ? AND cbb.date LIKE ?
+       ))` : ""}`,
+      branchId ? [month, branchId, branchId, `${month}-%`] : [month]
     );
     const kpiConfig = JSON.parse((await get("SELECT config_json FROM kpi_config WHERE id = 1")).config_json);
     const staffKpiMap = await getStaffKpiMap(month, staffRows);

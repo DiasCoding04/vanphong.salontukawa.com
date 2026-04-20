@@ -120,15 +120,20 @@ function AttendanceStyleTotalsTable({
   );
 }
 
-/** KPI tuần: tổng cả tuần (Thứ Hai–Chủ nhật), không chọn “một ngày trong tuần”. */
+/** KPI tuần: tổng cả tuần (Thứ Hai–Chủ nhật), không chọn "một ngày trong tuần". */
 export function KpiWeekAttendanceReport({ data, selectedBranchId }) {
   const [weekMonday, setWeekMonday] = useState(
     () => getMondaySundayIsoWeekContaining(vietnamTodayIsoDate()).weekStart
   );
   const [kpiRowById, setKpiRowById] = useState(() => new Map());
   const [kpiReady, setKpiReady] = useState(false);
+  const [staffVersion, setStaffVersion] = useState(0);
 
   const weekEnd = useMemo(() => addIsoDays(weekMonday, 6), [weekMonday]);
+
+  useEffect(() => {
+    setStaffVersion(v => v + 1);
+  }, [data.reloadVersion]);
 
   useEffect(() => {
     if (!selectedBranchId) {
@@ -154,7 +159,7 @@ export function KpiWeekAttendanceReport({ data, selectedBranchId }) {
     return () => {
       cancelled = true;
     };
-  }, [weekMonday, weekEnd, selectedBranchId]);
+  }, [weekMonday, weekEnd, selectedBranchId, staffVersion]);
 
   const staffRows = useMemo(() => {
     if (selectedBranchId == null || selectedBranchId === "") return [];
@@ -225,6 +230,11 @@ export function KpiMonthAttendanceReport({ data, selectedBranchId }) {
   const [month, setMonth] = useState(currentMonth());
   const [kpiRowById, setKpiRowById] = useState(() => new Map());
   const [kpiReady, setKpiReady] = useState(false);
+  const [staffVersion, setStaffVersion] = useState(0);
+
+  useEffect(() => {
+    setStaffVersion(v => v + 1);
+  }, [data.reloadVersion]);
 
   useEffect(() => {
     if (!selectedBranchId) {
@@ -250,7 +260,7 @@ export function KpiMonthAttendanceReport({ data, selectedBranchId }) {
     return () => {
       cancelled = true;
     };
-  }, [month, selectedBranchId]);
+  }, [month, selectedBranchId, staffVersion]);
 
   const staffRows = useMemo(() => {
     if (selectedBranchId == null || selectedBranchId === "") return [];
