@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useState, useRef } from "react";
 import { useData } from "./hooks/useData";
 import { api } from "./api/client";
+import { useAuth } from "./auth/AuthContext";
 import { DashboardPage } from "./pages/DashboardPage";
 import { StaffPage } from "./pages/StaffPage";
 import { PersonalInfoPage } from "./pages/PersonalInfoPage";
@@ -27,6 +28,7 @@ const kpiTopTabs = [
 ];
 
 function App() {
+  const { user, logout } = useAuth();
   const [activeTab, setActiveTab] = useState(() => localStorage.getItem("activeTab") || "dashboard");
   const [kpiSubTab, setKpiSubTab] = useState(() => localStorage.getItem("kpiSubTab") || "month");
   const [selectedBranchId, setSelectedBranchId] = useState(() => {
@@ -268,6 +270,14 @@ function App() {
             )}
           </div>
           <div className="topbar-right">
+            <div className="topbar-user">
+              <span className="topbar-user-name" title={user?.email || ""}>
+                {user?.username}
+              </span>
+              <button type="button" className="secondary topbar-logout" onClick={logout}>
+                Đăng xuất
+              </button>
+            </div>
             <div className="topbar-developer-credit">
               <span className="topbar-developer-line">Developer: Nguyen Viet Son</span>
               <span className="topbar-developer-line">Contact: 0978478240</span>

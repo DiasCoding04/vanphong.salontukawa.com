@@ -5,6 +5,8 @@ import { getMondaySundayIsoWeekContaining, vietnamTodayIsoDate, addIsoDays } fro
 
 /** Làm mới nền các bảng chuyển khoản khi tab đang mở (không cần F5). */
 const TRANSFER_TABLE_POLL_MS = 20_000;
+/** Làm mới nền tab tổng quan (thống kê doanh thu/sản phẩm) khi tab đang mở. */
+const OVERVIEW_POLL_MS = 15_000;
 
 function SimpleBarChart({ data, xKey, yKey, title, color = "#f0c040" }) {
   if (!data || data.length === 0) {
@@ -325,6 +327,20 @@ export function DashboardPage({ data, selectedBranchId }) {
 
   /** Luôn làm mới dữ liệu khi đang xem một trong các bảng chuyển khoản (không cần F5). */
   useEffect(() => {
+    if (activeTab === "overview") {
+      const pull = () => {
+        if (document.visibilityState !== "visible") return;
+        api.getDashboardStats(month)
+          .then((res) => setStats(res))
+          .catch((err) => console.error(err));
+      };
+      const id = setInterval(pull, OVERVIEW_POLL_MS);
+      document.addEventListener("visibilitychange", pull);
+      return () => {
+        clearInterval(id);
+        document.removeEventListener("visibilitychange", pull);
+      };
+    }
     if (activeTab === "transfer") {
       const id = setInterval(() => {
         loadWeekTransfer().catch((err) => console.error(err));
@@ -344,7 +360,7 @@ export function DashboardPage({ data, selectedBranchId }) {
       return () => clearInterval(id);
     }
     return undefined;
-  }, [activeTab, loadWeekTransfer, loadMonthTransfer, loadSalaryTransfer]);
+  }, [activeTab, month, loadWeekTransfer, loadMonthTransfer, loadSalaryTransfer]);
 
   const salaryTransferMain = useMemo(
     () => salaryTransferRows.filter((r) => r.type === "main"),

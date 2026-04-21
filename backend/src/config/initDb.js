@@ -100,13 +100,42 @@ async function initDb() {
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     staff_id INTEGER NOT NULL,
     report_date TEXT NOT NULL,
-    work_status TEXT NOT NULL CHECK(work_status IN ('reported','not_reported')),
+    work_status TEXT NOT NULL CHECK(work_status IN ('reported','not_reported','late_reported')),
     work_penalty INTEGER,
     video_status TEXT NOT NULL CHECK(video_status IN ('posted','not_posted')),
     video_penalty INTEGER,
     UNIQUE(staff_id, report_date),
     FOREIGN KEY(staff_id) REFERENCES staff(id)
   )`);
+
+  // Migration: mở rộng CHECK(work_status) cũ ('reported','not_reported') → thêm 'late_reported'.
+  // Nếu DB cũ chưa có 'late_reported' trong ràng buộc, khi UI chọn "Báo cáo muộn" sẽ lỗi CHECK constraint failed.
+  const drSql = await get(`SELECT sql FROM sqlite_master WHERE type='table' AND name='daily_reports'`);
+  if (drSql && drSql.sql && !drSql.sql.includes("'late_reported'")) {
+    console.log("Migrating daily_reports.work_status to allow 'late_reported'...");
+    await run("BEGIN TRANSACTION");
+    try {
+      await run("ALTER TABLE daily_reports RENAME TO daily_reports_old");
+      await run(`CREATE TABLE daily_reports (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        staff_id INTEGER NOT NULL,
+        report_date TEXT NOT NULL,
+        work_status TEXT NOT NULL CHECK(work_status IN ('reported','not_reported','late_reported')),
+        work_penalty INTEGER,
+        video_status TEXT NOT NULL CHECK(video_status IN ('posted','not_posted')),
+        video_penalty INTEGER,
+        UNIQUE(staff_id, report_date),
+        FOREIGN KEY(staff_id) REFERENCES staff(id)
+      )`);
+      await run(`INSERT INTO daily_reports (id, staff_id, report_date, work_status, work_penalty, video_status, video_penalty)
+                 SELECT id, staff_id, report_date, work_status, work_penalty, video_status, video_penalty FROM daily_reports_old`);
+      await run("DROP TABLE daily_reports_old");
+      await run("COMMIT");
+    } catch (err) {
+      await run("ROLLBACK");
+      console.error("Migration daily_reports failed:", err);
+    }
+  }
 
   const salaryAdjCols = await runAndGetColsForTable("salary_adjustments");
   if (salaryAdjCols.length && !salaryAdjCols.includes("attendance_id")) {
@@ -262,9 +291,55 @@ async function initDb() {
   if (hasKpi.total === 0) {
     await run("INSERT INTO kpi_config (id, config_json) VALUES (1, ?)", [JSON.stringify(defaultKpiConfig)]);
   }
+
+  await run(`CREATE TABLE IF NOT EXISTS admin_users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    email TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+
+  await run(`CREATE TABLE IF NOT EXISTS password_reset_codes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL,
+    code_hash TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  await run("CREATE INDEX IF NOT EXISTS idx_password_reset_email ON password_reset_codes (email)");
+
+  await migrateStaffAccountNumberUnique();
 }
 
 module.exports = { initDb };
+
+/** STK rỗng → NULL; trim; bỏ trùng (giữ id nhỏ nhất); UNIQUE toàn hệ thống. */
+async function migrateStaffAccountNumberUnique() {
+  const staffCols = await runAndGetCols();
+  if (!staffCols.includes("account_number")) return;
+
+  await run("UPDATE staff SET account_number = NULL WHERE account_number IS NOT NULL AND trim(account_number) = ''");
+  await run("UPDATE staff SET account_number = trim(account_number) WHERE account_number IS NOT NULL");
+
+  const rows = await all("SELECT id, account_number FROM staff WHERE account_number IS NOT NULL ORDER BY id");
+  const seen = new Set();
+  for (const row of rows) {
+    const key = row.account_number;
+    if (seen.has(key)) {
+      await run("UPDATE staff SET account_number = NULL WHERE id = ?", [row.id]);
+      console.warn(`[initDb] Trùng STK "${key}" — đã xóa STK tại nhân sự id ${row.id} (giữ bản ghi có id nhỏ hơn).`);
+    } else {
+      seen.add(key);
+    }
+  }
+
+  try {
+    await run("CREATE UNIQUE INDEX IF NOT EXISTS idx_staff_account_number_unique ON staff (account_number)");
+  } catch (err) {
+    console.error("[initDb] Không tạo được UNIQUE trên staff.account_number:", err.message || err);
+  }
+}
 
 async function runAndGetCols() {
   const rowCols = await get("SELECT group_concat(name, ',') AS cols FROM pragma_table_info('staff')");

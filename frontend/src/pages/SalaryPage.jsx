@@ -3,6 +3,9 @@ import { useEffect, useMemo, useState, useCallback } from "react";
 import { api } from "../api/client";
 import { currentMonth, fmtMoney } from "../utils/format";
 
+/** Cập nhật nền bảng lương khi tab đang mở (không cần F5). */
+const SALARY_POLL_MS = 15_000;
+
 export function SalaryPage({ selectedBranchId }) {
   const [tab, setTab] = useState("calculate");
   const [month, setMonth] = useState(currentMonth());
@@ -21,6 +24,16 @@ export function SalaryPage({ selectedBranchId }) {
     }
   }, [month, selectedBranchId, reportStaffId]);
 
+  /** Silent refresh (không nhấp nháy) — phục vụ polling nền. */
+  const silentLoad = useCallback(async () => {
+    try {
+      const salaryRows = await api.getSalaryReport(month, selectedBranchId);
+      setRows(salaryRows);
+    } catch {
+      /* lỗi mạng tạm — giữ dữ liệu cũ */
+    }
+  }, [month, selectedBranchId]);
+
   async function openPenaltyHistory(r) {
     try {
       const list = await api.getSalaryAdjustments({ month, staffId: r.id, type: "penalty" });
@@ -34,6 +47,19 @@ export function SalaryPage({ selectedBranchId }) {
     setPenaltyHistory(null);
     load();
   }, [month, selectedBranchId, load]);
+
+  /** Polling nền: đảm bảo bảng lương luôn đồng bộ với mọi thay đổi ở các trang khác. */
+  useEffect(() => {
+    const sync = () => {
+      if (document.visibilityState === "visible") silentLoad();
+    };
+    const id = setInterval(sync, SALARY_POLL_MS);
+    document.addEventListener("visibilitychange", sync);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", sync);
+    };
+  }, [silentLoad]);
 
   const total = useMemo(() => rows.reduce((sum, r) => sum + r.total, 0), [rows]);
 

@@ -1,0 +1,31 @@
+# Apache (.htaccess) cho vanphong.salontukawa.com
+# - Document root phải trỏ tới thư mục frontend/dist (nơi chứa file này + index.html + assets/)
+# - Backend Node (Express) chạy bằng PM2 ở 127.0.0.1:4000 (đổi nếu dùng port khác)
+
+RewriteEngine On
+
+# Giữ ACME challenge cho SSL
+RewriteRule ^\.well-known/ - [L]
+
+# Ép HTTPS (nếu panel chưa force)
+RewriteCond %{HTTPS} !=on
+RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+
+# Reverse proxy API về Node (PM2 port 4000)
+RewriteRule ^api/(.*)$ http://127.0.0.1:4000/api/$1 [P,L]
+<IfModule mod_proxy.c>
+  ProxyPassReverse /api http://127.0.0.1:4000/api
+</IfModule>
+<IfModule mod_headers.c>
+  RequestHeader set X-Forwarded-Proto "https"
+  RequestHeader set X-Forwarded-Port "443"
+</IfModule>
+
+# SPA (React Router): URL không trùng file/thư mục thật -> index.html
+RewriteCond %{REQUEST_URI} !^/api(/|$)
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.html [L]
+
+# Chặn liệt kê thư mục
+Options -Indexes

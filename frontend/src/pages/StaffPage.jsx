@@ -74,8 +74,27 @@ export function StaffPage({ data, selectedBranchId }) {
       endDate: form.status === "left" ? form.endDate : null
     };
 
-    if (form.id) await api.updateStaff(form.id, payload);
-    else await api.createStaff(payload);
+    const acct = payload.accountNumber;
+    if (acct) {
+      const conflict = data.staff.some(
+        (s) =>
+          s.accountNumber &&
+          String(s.accountNumber).trim() === acct &&
+          s.id !== form.id
+      );
+      if (conflict) {
+        setError("Số tài khoản đã được dùng cho nhân sự khác trên toàn hệ thống.");
+        return;
+      }
+    }
+
+    try {
+      if (form.id) await api.updateStaff(form.id, payload);
+      else await api.createStaff(payload);
+    } catch (e) {
+      setError(e.message || "Không lưu được nhân sự.");
+      return;
+    }
 
     await data.reload();
     resetForm();

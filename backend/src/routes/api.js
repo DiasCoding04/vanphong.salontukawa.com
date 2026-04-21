@@ -5,8 +5,14 @@ const crypto = require("crypto");
 const multer = require("multer");
 const { all, get, run, transaction } = require("../config/db");
 const { calculateKpiByStaff, calculateKpiWeekByStaff, calculateSalaryReport } = require("../services/reportService");
+const { requireAuth } = require("../middleware/auth");
 
 const router = express.Router();
+
+router.use((req, res, next) => {
+  if (req.path === "/health") return next();
+  return requireAuth(req, res, next);
+});
 
 const CCCD_UPLOAD_DIR = path.join(__dirname, "../../data/uploads/cccd");
 
@@ -66,6 +72,19 @@ function normalizeStaffStatus(status) {
   if (status === "active") return "working";
   if (status === "inactive") return "left";
   return status || "working";
+}
+
+/** STK rỗng → NULL (nhiều bản ghi không có STK); có giá trị thì trim, duy nhất toàn hệ thống. */
+function normalizeStaffAccountNumber(raw) {
+  if (raw == null) return null;
+  const t = String(raw).trim();
+  return t === "" ? null : t;
+}
+
+function isSqliteUniqueStaffAccountNumber(error) {
+  if (!error || error.code !== "SQLITE_CONSTRAINT") return false;
+  const msg = String(error.message || "");
+  return msg.includes("account_number") || msg.includes("idx_staff_account_number_unique");
 }
 
 function overlapsEmploymentClause(fromField, toField) {
@@ -255,13 +274,19 @@ router.post("/staff", async (req, res, next) => {
     if (normalizedStatus === "left" && !endDate) {
       return res.status(400).json({ message: "endDate is required when status is left" });
     }
+    const acct = normalizeStaffAccountNumber(accountNumber);
     const result = await run(
       "INSERT INTO staff (name, type, branch_id, base_salary, account_number, hold_remaining, status, start_date, end_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      [name, type, branchId, baseSalary, accountNumber || "", holdRemaining || 0, normalizedStatus, startDate, endDate || null]
+      [name, type, branchId, baseSalary, acct, holdRemaining || 0, normalizedStatus, startDate, endDate || null]
     );
     const created = await get("SELECT * FROM staff WHERE id = ?", [result.id]);
     res.status(201).json(toStaffDto(created));
   } catch (error) {
+    if (isSqliteUniqueStaffAccountNumber(error)) {
+      return res.status(400).json({
+        message: "Số tài khoản đã được dùng cho nhân sự khác trên toàn hệ thống."
+      });
+    }
     next(error);
   }
 });
@@ -270,17 +295,33 @@ router.put("/staff/:id", async (req, res, next) => {
   try {
     const { id } = req.params;
     const { name, type, branchId, baseSalary, accountNumber, holdRemaining, status, startDate, endDate } = req.body;
-    const normalizedStatus = normalizeStaffStatus(status);
-    if (normalizedStatus === "left" && !endDate) {
+
+    const existing = await get("SELECT * FROM staff WHERE id = ?", [id]);
+    if (!existing) return res.status(404).json({ message: "Staff not found" });
+
+    /** Nếu body không gửi status → giữ nguyên status + end_date hiện tại.
+     *  Tránh trường hợp: chỉ sửa tên/chi nhánh vô tình hồi sinh nhân sự đã nghỉ. */
+    const statusProvided = status !== undefined && status !== null && status !== "";
+    const normalizedStatus = statusProvided ? normalizeStaffStatus(status) : existing.status;
+    const endProvided = Object.prototype.hasOwnProperty.call(req.body, "endDate");
+    const finalEnd = endProvided ? (endDate || null) : existing.end_date;
+    if (normalizedStatus === "left" && !finalEnd) {
       return res.status(400).json({ message: "endDate is required when status is left" });
     }
+
+    const acct = normalizeStaffAccountNumber(accountNumber);
     await run(
       `UPDATE staff SET name = ?, type = ?, branch_id = ?, base_salary = ?, account_number = ?, hold_remaining = ?, status = ?, start_date = ?, end_date = ? WHERE id = ?`,
-      [name, type, branchId, baseSalary, accountNumber || "", holdRemaining || 0, normalizedStatus, startDate, endDate || null, id]
+      [name, type, branchId, baseSalary, acct, holdRemaining || 0, normalizedStatus, startDate, finalEnd, id]
     );
     const updated = await get("SELECT * FROM staff WHERE id = ?", [id]);
     res.json(toStaffDto(updated));
   } catch (error) {
+    if (isSqliteUniqueStaffAccountNumber(error)) {
+      return res.status(400).json({
+        message: "Số tài khoản đã được dùng cho nhân sự khác trên toàn hệ thống."
+      });
+    }
     next(error);
   }
 });
@@ -460,7 +501,6 @@ router.put("/attendance", async (req, res, next) => {
     const cbBookings = await all("SELECT type, revenue FROM cross_branch_bookings WHERE staff_id = ? AND date = ?", [staffId, date]);
     const cbChemical = cbBookings.filter(b => b.type === 'chemical');
     const cbWash = cbBookings.filter(b => b.type === 'wash');
-    const cbProduct = cbBookings.filter(b => b.type === 'product');
 
     // Nếu có lịch chéo, nhân viên phải được coi là có mặt (present = 1)
     const present = (absent && cbBookings.length === 0) ? 0 : 1;
@@ -470,9 +510,11 @@ router.put("/attendance", async (req, res, next) => {
       staff.type === "assistant"
         ? washLines.reduce((sum, b) => sum + (b.revenue >= washDoubleCountFromVnd ? 2 : 1), 0) + cbWash.reduce((sum, b) => sum + (b.revenue >= washDoubleCountFromVnd ? 2 : 1), 0)
         : 0;
-    
-    // totalProducts = main branch products + cross branch products
-    const totalProducts = (Number(products) || 0) + cbProduct.length;
+
+    /** products trong attendance do POST/PUT/DELETE /cross-branch-bookings tự duy trì phần cross;
+     *  PUT /attendance chỉ ghi số sản phẩm home (từ body). Nếu body.products là tổng đã bao gồm cross
+     *  (UI đọc row.products để hiển thị), thì khi lưu lại vẫn bằng chính giá trị đó → không double-count. */
+    const totalProducts = Number(products) || 0;
 
     // Lịch chéo sản phẩm: chỉ cộng số lượng (cbProduct.length ở totalProducts), không cộng doanh thu vào revenue thợ
     const cbRevenueLines = cbBookings.filter((b) => b.type === "chemical" || b.type === "wash");
@@ -649,19 +691,18 @@ router.post("/cross-branch-bookings", async (req, res, next) => {
         addedProducts += 1;
       }
 
-      // Update attendance
+      // Update attendance: KHÔNG đụng total_clients (cross không thay đổi số khách tại chi nhánh nhà)
       if (totalBookingsCount > 0) {
         await run(`
           INSERT INTO attendance (staff_id, date, present, bookings, total_clients, checkins, products, revenue, wash, chemical_bookings_json, wash_bookings_json)
-          VALUES (?, ?, 1, ?, ?, 0, ?, ?, ?, '[]', '[]')
+          VALUES (?, ?, 1, ?, 0, 0, ?, ?, ?, '[]', '[]')
           ON CONFLICT(staff_id, date) DO UPDATE SET
             present = 1,
             bookings = bookings + excluded.bookings,
-            total_clients = total_clients + excluded.total_clients,
             revenue = revenue + excluded.revenue,
             wash = wash + excluded.wash,
             products = products + excluded.products
-        `, [staffId, date, addedChemical, totalBookingsCount, addedProducts, totalRevenue, addedWashVal]);
+        `, [staffId, date, addedChemical, addedProducts, totalRevenue, addedWashVal]);
       }
     });
 
@@ -1551,7 +1592,8 @@ router.get("/reports/dashboard", async (req, res, next) => {
     const branchStats = [];
 
     for (const b of branches) {
-      // Doanh thu từ thợ nhà (tổng attendance.revenue của thợ thuộc chi nhánh này)
+      // Doanh thu chi nhánh = doanh thu dịch vụ (chemical+wash) phát sinh tại chi nhánh này.
+      // attendance.revenue đã bao gồm: (home chemical+wash tại nhà) + (cross chemical+wash của thợ nhà đi chi nhánh khác).
       const homeStaffAttendance = await get(`
         SELECT SUM(a.revenue) as rev, SUM(a.products) as prod
         FROM attendance a
@@ -1559,17 +1601,19 @@ router.get("/reports/dashboard", async (req, res, next) => {
         WHERE s.branch_id = ? AND a.date LIKE ?
       `, [b.id, `${currentMonthStr}-%`]);
 
-      // Trừ đi doanh thu mà thợ nhà mình đi làm ở chi nhánh khác (cross-bookings)
+      // Trừ đi phần CHEMICAL+WASH thợ nhà làm ở chi nhánh khác (product không nằm trong attendance.revenue).
       const homeStaffCrossOut = await get(`
-        SELECT SUM(revenue) as rev, SUM(CASE WHEN type = 'product' THEN 1 ELSE 0 END) as prod
+        SELECT SUM(CASE WHEN type IN ('chemical','wash') THEN revenue ELSE 0 END) as rev,
+               SUM(CASE WHEN type = 'product' THEN 1 ELSE 0 END) as prod
         FROM cross_branch_bookings
         WHERE staff_id IN (SELECT id FROM staff WHERE branch_id = ?) 
         AND date LIKE ?
       `, [b.id, `${currentMonthStr}-%`]);
 
-      // Cộng thêm doanh thu từ thợ chi nhánh khác đến làm tại đây
+      // Cộng CHEMICAL+WASH của thợ khách đến làm tại đây (không cộng revenue sản phẩm — để nhất quán với attendance).
       const guestStaffCrossIn = await get(`
-        SELECT SUM(revenue) as rev, SUM(CASE WHEN type = 'product' THEN 1 ELSE 0 END) as prod
+        SELECT SUM(CASE WHEN type IN ('chemical','wash') THEN revenue ELSE 0 END) as rev,
+               SUM(CASE WHEN type = 'product' THEN 1 ELSE 0 END) as prod
         FROM cross_branch_bookings
         WHERE service_branch_id = ? AND date LIKE ?
       `, [b.id, `${currentMonthStr}-%`]);

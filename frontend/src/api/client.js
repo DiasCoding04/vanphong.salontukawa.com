@@ -1,5 +1,36 @@
-export const API_BASE_URL = "http://localhost:4000";
-const API_URL = `${API_BASE_URL}/api`;
+/**
+ * Dev: http://localhost:4000
+ * Production: để trống (cùng domain, Nginx proxy /api → Node) hoặc set VITE_API_BASE_URL=https://vanphong.salontukawa.com
+ */
+const envBase = import.meta.env.VITE_API_BASE_URL;
+export const API_BASE_URL =
+  envBase !== undefined && String(envBase).trim() !== ""
+    ? String(envBase).trim().replace(/\/$/, "")
+    : import.meta.env.DEV
+      ? "http://localhost:4000"
+      : "";
+
+const API_URL = API_BASE_URL === "" ? "/api" : `${API_BASE_URL}/api`;
+
+const AUTH_TOKEN_KEY = "authToken";
+
+export function getAuthToken() {
+  try {
+    return localStorage.getItem(AUTH_TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setAuthToken(token) {
+  if (token) localStorage.setItem(AUTH_TOKEN_KEY, token);
+  else localStorage.removeItem(AUTH_TOKEN_KEY);
+}
+
+function authHeaders() {
+  const t = getAuthToken();
+  return t ? { Authorization: `Bearer ${t}` } : {};
+}
 
 async function request(path, options = {}) {
   const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
@@ -8,9 +39,22 @@ async function request(path, options = {}) {
     ...options,
     headers: {
       ...(isFormData ? {} : { "Content-Type": "application/json" }),
+      ...authHeaders(),
       ...options.headers
     }
   });
+  const pathOnly = path.split("?")[0];
+  const skipUnauthorizedClear =
+    pathOnly === "/auth/login" ||
+    pathOnly === "/auth/register" ||
+    pathOnly === "/auth/forgot-password" ||
+    pathOnly === "/auth/reset-password";
+  if (res.status === 401 && !skipUnauthorizedClear) {
+    setAuthToken(null);
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("auth:unauthorized"));
+    }
+  }
   if (!res.ok) {
     const errData = await res.json().catch(() => ({}));
     const error = new Error(errData.message || `API error: ${res.status}`);
@@ -27,6 +71,15 @@ export function getCccdImageUrl(staffId) {
 }
 
 export const api = {
+  authLogin: (payload) =>
+    request("/auth/login", { method: "POST", body: JSON.stringify(payload) }),
+  authRegister: (payload) =>
+    request("/auth/register", { method: "POST", body: JSON.stringify(payload) }),
+  authMe: () => request(`/auth/me?_t=${Date.now()}`),
+  authForgotPassword: (payload) =>
+    request("/auth/forgot-password", { method: "POST", body: JSON.stringify(payload) }),
+  authResetPassword: (payload) =>
+    request("/auth/reset-password", { method: "POST", body: JSON.stringify(payload) }),
   getBranches: () => request(`/branches?_t=${Date.now()}`),
   createBranch: (payload) => request("/branches", { method: "POST", body: JSON.stringify(payload) }),
   updateBranch: (id, payload) => request(`/branches/${id}`, { method: "PUT", body: JSON.stringify(payload) }),

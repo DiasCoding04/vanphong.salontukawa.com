@@ -1,7 +1,10 @@
 /* eslint-disable react-hooks/set-state-in-effect */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
 import { currentMonth, fmtMoneyThousands, formatViDateShort } from "../utils/format";
+
+/** Làm mới nền bảng KPI quản lý khi tab đang mở (không cần F5). */
+const KPI_MANAGER_POLL_MS = 10_000;
 
 /** Các ngày YYYY-MM-DD trong tháng `YYYY-MM`. */
 function monthIsoDates(monthStr) {
@@ -75,6 +78,31 @@ export function KpiManagerPage({ data, selectedBranchId }) {
   useEffect(() => {
     loadAttendanceMonth();
   }, [loadAttendanceMonth]);
+
+  /** Silent refresh (không set loading flag) cho polling nền. */
+  const silentLoadAtt = useCallback(async () => {
+    if (!selectedBranchId) return;
+    try {
+      setAttRows(await api.getAttendanceByMonth(month, selectedBranchId));
+    } catch {
+      /* ignore network blips */
+    }
+  }, [month, selectedBranchId]);
+
+  const silentLoadAttRef = useRef(silentLoadAtt);
+  silentLoadAttRef.current = silentLoadAtt;
+
+  useEffect(() => {
+    const sync = () => {
+      if (document.visibilityState === "visible") silentLoadAttRef.current();
+    };
+    const id = setInterval(sync, KPI_MANAGER_POLL_MS);
+    document.addEventListener("visibilitychange", sync);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", sync);
+    };
+  }, []);
 
   const dates = useMemo(() => monthIsoDates(month), [month]);
 

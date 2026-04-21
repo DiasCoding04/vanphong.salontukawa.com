@@ -3,6 +3,7 @@ process.env.TZ = "Asia/Ho_Chi_Minh";
 const express = require("express");
 const cors = require("cors");
 const apiRoutes = require("./routes/api");
+const authRoutes = require("./routes/auth");
 const { initDb } = require("./config/initDb");
 
 const app = express();
@@ -10,6 +11,7 @@ const port = Number(process.env.PORT || 4000);
 
 app.use(cors());
 app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || "5mb" }));
+app.use("/api/auth", authRoutes);
 app.use("/api", apiRoutes);
 
 app.use((error, _, res, __) => {
