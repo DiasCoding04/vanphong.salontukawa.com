@@ -14,10 +14,10 @@ export function SalaryPage({ selectedBranchId }) {
   const [reportStaffId, setReportStaffId] = useState("");
 
   const load = useCallback(async () => {
-    const data = await api.getSalaryReport(month, selectedBranchId);
-    setRows(data);
-    if (data.length > 0 && !reportStaffId) {
-      setReportStaffId(data[0].id);
+    const salaryRows = await api.getSalaryReport(month, selectedBranchId);
+    setRows(salaryRows);
+    if (salaryRows.length > 0 && !reportStaffId) {
+      setReportStaffId(salaryRows[0].id);
     }
   }, [month, selectedBranchId, reportStaffId]);
 

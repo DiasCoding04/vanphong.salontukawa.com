@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState, useRef } from "react";
 import { useData } from "./hooks/useData";
 import { api } from "./api/client";
 import { DashboardPage } from "./pages/DashboardPage";
@@ -9,7 +9,7 @@ import { KpiResultsPage } from "./pages/KpiResultsPage";
 import { SalaryPage } from "./pages/SalaryPage";
 const tabs = [
   { key: "dashboard", label: "Tổng quan", icon: "📊" },
-  { key: "branches", label: "Lọc chi nhánh", icon: "🏢" },
+  { key: "branches", label: "Quản lý chi nhánh", icon: "🏢" },
   { key: "staff", label: "Nhân sự", icon: "👥" },
   { key: "personal-info", label: "Thông tin cá nhân", icon: "👤" },
   { key: "attendance", label: "Chấm công", icon: "📅" },
@@ -34,6 +34,10 @@ function App() {
     return saved ? Number(saved) : null;
   });
   const [newBranchName, setNewBranchName] = useState("");
+  const [branchPickerOpen, setBranchPickerOpen] = useState(false);
+  const [editingBranchId, setEditingBranchId] = useState(null);
+  const [editBranchName, setEditBranchName] = useState("");
+  const branchPickerRef = useRef(null);
   const [theme, setTheme] = useState(() => localStorage.getItem("theme") || "dark");
   const data = useData();
 
@@ -58,15 +62,37 @@ function App() {
     localStorage.setItem("theme", theme);
   }, [theme]);
 
+  useLayoutEffect(() => {
+    if (data.loading) return;
+    if (data.branches.length === 0) {
+      if (selectedBranchId != null) setSelectedBranchId(null);
+      return;
+    }
+    const valid = selectedBranchId != null && data.branches.some((b) => b.id === selectedBranchId);
+    if (!valid) setSelectedBranchId(data.branches[0].id);
+  }, [data.loading, data.branches, selectedBranchId]);
+
+  useEffect(() => {
+    if (!branchPickerOpen) return;
+    const onDown = (e) => {
+      if (branchPickerRef.current && !branchPickerRef.current.contains(e.target)) {
+        setBranchPickerOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [branchPickerOpen]);
+
   const toggleTheme = () => {
     setTheme((prev) => (prev === "dark" ? "light" : "dark"));
   };
 
   const renderBody = () => {
-    if (!selectedBranchId && activeTab !== "branches" && activeTab !== "dashboard") {
+    if (!data.loading && !data.error && data.branches.length === 0 && activeTab !== "branches") {
       return (
         <div className="card">
-          <h3>Vui lòng chọn chi nhánh</h3>
+          <h3>Chưa có chi nhánh</h3>
+          <p className="muted">Vào mục Quản lý chi nhánh để thêm chi nhánh đầu tiên.</p>
         </div>
       );
     }
@@ -74,12 +100,8 @@ function App() {
       return (
         <div className="card">
           <div className="page-header">
-            <h3>Lọc chi nhánh</h3>
-            {selectedBranchId && (
-              <span className="muted">
-                Đang chọn: {data.branches.find((b) => b.id === selectedBranchId)?.name}
-              </span>
-            )}
+            <h3>Quản lý chi nhánh</h3>
+            <span className="muted">Thêm, sửa tên hoặc xóa chi nhánh. Lọc dữ liệu theo chi nhánh dùng nút ở góc trên bên phải.</span>
           </div>
           <div className="row">
             <input
@@ -87,15 +109,54 @@ function App() {
               onChange={(e) => setNewBranchName(e.target.value)}
               placeholder="Tên chi nhánh mới"
             />
-            <button className="primary" onClick={handleCreateBranch}>Thêm</button>
+            <button type="button" className="primary" onClick={handleCreateBranch}>Thêm</button>
           </div>
           <div className="branch-list" style={{ marginTop: 16 }}>
             {data.branches.map((branch) => (
-              <div key={branch.id} className={selectedBranchId === branch.id ? "branch-item active" : "branch-item"}>
-                <button className="branch-select" onClick={() => setSelectedBranchId(branch.id)}>
-                  {branch.name}
-                </button>
-                <button className="branch-delete" onClick={() => handleDeleteBranch(branch.id)} title="Xóa">🗑️</button>
+              <div key={branch.id} className="branch-item branch-item-manage">
+                {editingBranchId === branch.id ? (
+                  <>
+                    <input
+                      className="branch-edit-input"
+                      value={editBranchName}
+                      onChange={(e) => setEditBranchName(e.target.value)}
+                      aria-label="Tên chi nhánh"
+                    />
+                    <button
+                      type="button"
+                      className="primary"
+                      onClick={() => handleSaveBranchName(branch.id)}
+                    >
+                      Lưu
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={() => {
+                        setEditingBranchId(null);
+                        setEditBranchName("");
+                      }}
+                    >
+                      Hủy
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <span className="branch-item-name">{branch.name}</span>
+                    <button
+                      type="button"
+                      className="secondary branch-edit-btn"
+                      onClick={() => {
+                        setEditingBranchId(branch.id);
+                        setEditBranchName(branch.name);
+                      }}
+                      title="Sửa tên"
+                    >
+                      Sửa
+                    </button>
+                    <button type="button" className="branch-delete" onClick={() => handleDeleteBranch(branch.id)} title="Xóa">🗑️</button>
+                  </>
+                )}
               </div>
             ))}
           </div>
@@ -108,8 +169,8 @@ function App() {
     if (activeTab === "kpi") return (
       <KpiResultsPage data={data} selectedBranchId={selectedBranchId} subTab={kpiSubTab} />
     );
-    if (activeTab === "salary") return <SalaryPage data={data} selectedBranchId={selectedBranchId} />;
-    return <DashboardPage data={data} />;
+    if (activeTab === "salary") return <SalaryPage selectedBranchId={selectedBranchId} />;
+    return <DashboardPage data={data} selectedBranchId={selectedBranchId} />;
   };
 
   async function handleCreateBranch() {
@@ -118,6 +179,19 @@ function App() {
     await api.createBranch({ name });
     setNewBranchName("");
     await data.reload();
+  }
+
+  async function handleSaveBranchName(branchId) {
+    const name = editBranchName.trim();
+    if (!name) return;
+    try {
+      await api.updateBranch(branchId, { name });
+      setEditingBranchId(null);
+      setEditBranchName("");
+      await data.reload();
+    } catch (e) {
+      alert(e.message || "Không lưu được tên chi nhánh.");
+    }
   }
 
   async function handleDeleteBranch(id) {
@@ -194,7 +268,51 @@ function App() {
             )}
           </div>
           <div className="topbar-right">
-            <button className="theme-toggle" onClick={toggleTheme} title="Chuyển chế độ sáng/tối">
+            <div className="topbar-developer-credit">
+              <span className="topbar-developer-line">Developer: Nguyen Viet Son</span>
+              <span className="topbar-developer-line">Contact: 0978478240</span>
+            </div>
+            <div className="branch-picker-wrap" ref={branchPickerRef}>
+              <button
+                type="button"
+                className="branch-picker-trigger"
+                onClick={() => setBranchPickerOpen((o) => !o)}
+                title="Chọn chi nhánh làm việc"
+                disabled={data.loading || !!data.error}
+              >
+                <span className="branch-picker-label">
+                  {data.branches.length === 0
+                    ? "Chưa có chi nhánh"
+                    : selectedBranchId
+                      ? data.branches.find((b) => b.id === selectedBranchId)?.name ?? "Chi nhánh"
+                      : "Chọn chi nhánh"}
+                </span>
+                <span className="branch-picker-caret" aria-hidden>▾</span>
+              </button>
+              {branchPickerOpen && !data.loading && !data.error && (
+                <div className="branch-picker-dropdown" role="listbox">
+                  {data.branches.length === 0 ? (
+                    <div className="branch-picker-empty muted">Chưa có chi nhánh — vào Quản lý chi nhánh để thêm.</div>
+                  ) : (
+                    data.branches.map((b) => (
+                      <button
+                        key={b.id}
+                        type="button"
+                        role="option"
+                        className={`branch-picker-option${selectedBranchId === b.id ? " active" : ""}`}
+                        onClick={() => {
+                          setSelectedBranchId(b.id);
+                          setBranchPickerOpen(false);
+                        }}
+                      >
+                        {b.name}
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+            <button type="button" className="theme-toggle" onClick={toggleTheme} title="Chuyển chế độ sáng/tối">
               {theme === "dark" ? "☀️" : "🌙"}
             </button>
           </div>

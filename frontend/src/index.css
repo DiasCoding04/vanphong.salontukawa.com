@@ -182,6 +182,35 @@ body {
   background: rgba(255, 107, 107, 0.1);
 }
 
+.branch-item-manage {
+  justify-content: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.branch-item-name {
+  flex: 1;
+  padding: 8px 12px;
+  font-weight: 500;
+  font-size: 13px;
+  min-width: 0;
+}
+
+.branch-edit-input {
+  flex: 1;
+  min-width: 120px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-main);
+  background: var(--bg-body);
+  color: var(--text-main);
+}
+
+.branch-edit-btn {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
 .main {
   display: grid;
   grid-template-rows: 64px minmax(0, 1fr);
@@ -203,6 +232,128 @@ body {
   margin: 0;
   font-size: 18px;
   font-weight: 700;
+}
+
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Ghi nhận developer — nhỏ, mờ, đặt sát bên trái nút chọn chi nhánh */
+.topbar-developer-credit {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  margin-right: 4px;
+  padding-right: 8px;
+  border-right: 1px solid var(--border-main);
+  font-size: 10px;
+  line-height: 1.4;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+  opacity: 0.65;
+  max-width: 200px;
+  text-align: right;
+  user-select: none;
+}
+
+.topbar-developer-line {
+  display: block;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .topbar-developer-credit {
+    display: none;
+  }
+}
+
+.branch-picker-wrap {
+  position: relative;
+}
+
+.branch-picker-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 12px 0 14px;
+  background: var(--bg-button-secondary);
+  border: 1px solid var(--border-button);
+  color: var(--text-main);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  max-width: min(240px, 42vw);
+  transition: 0.2s;
+}
+
+.branch-picker-trigger:hover:not(:disabled) {
+  background: var(--bg-input);
+}
+
+.branch-picker-trigger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.branch-picker-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.branch-picker-caret {
+  font-size: 10px;
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+
+.branch-picker-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 100%;
+  width: max-content;
+  max-width: min(280px, 90vw);
+  max-height: min(360px, 70vh);
+  overflow-y: auto;
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border-main);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  z-index: 200;
+  padding: 4px;
+}
+
+.branch-picker-option {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  text-align: left;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-main);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.branch-picker-option:hover {
+  background: var(--bg-input);
+}
+
+.branch-picker-option.active {
+  background: var(--bg-item-active);
+  color: var(--text-active);
+}
+
+.branch-picker-empty {
+  padding: 12px;
+  font-size: 13px;
 }
 
 .top-tabs {

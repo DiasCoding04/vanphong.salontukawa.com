@@ -1,7 +1,10 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import { api } from "../api/client";
 import { currentMonth, fmtMoney, formatViDateShort } from "../utils/format";
 import { getMondaySundayIsoWeekContaining, vietnamTodayIsoDate, addIsoDays } from "../utils/vietnamTime";
+
+/** Làm mới nền các bảng chuyển khoản khi tab đang mở (không cần F5). */
+const TRANSFER_TABLE_POLL_MS = 20_000;
 
 function SimpleBarChart({ data, xKey, yKey, title, color = "#f0c040" }) {
   if (!data || data.length === 0) {
@@ -196,7 +199,36 @@ function KpiTransferTable({ title, list, criterion, isPass, amount, type }) {
   );
 }
 
-export function DashboardPage({ data }) {
+function SalaryTransferMonthTable({ title, staffList }) {
+  if (staffList.length === 0) return null;
+  return (
+    <div className="card kpi-transfer-card" style={{ marginBottom: 20 }}>
+      <h4 style={{ marginBottom: 15 }}>{title}</h4>
+      <div className="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Nhân viên</th>
+              <th>Số tiền cần chuyển</th>
+              <th>Số tài khoản</th>
+            </tr>
+          </thead>
+          <tbody>
+            {staffList.map((r) => (
+              <tr key={r.id}>
+                <td>{r.name}</td>
+                <td style={{ fontWeight: 600 }}>{fmtMoney(r.total)}</td>
+                <td>{r.account_number && String(r.account_number).trim() ? r.account_number : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+export function DashboardPage({ data, selectedBranchId }) {
   const [activeTab, setActiveTab] = useState("overview");
   const [month, setMonth] = useState(currentMonth());
   const [weekMonday, setWeekMonday] = useState(() => 
@@ -211,12 +243,51 @@ export function DashboardPage({ data }) {
   const [stats, setStats] = useState(null);
   const [weekKpi, setWeekKpi] = useState([]);
   const [monthKpi, setMonthKpi] = useState([]);
+  const [salaryTransferBranchId, setSalaryTransferBranchId] = useState(null);
+  const [salaryTransferRows, setSalaryTransferRows] = useState([]);
+  const [salaryTransferLoading, setSalaryTransferLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [staffVersion, setStaffVersion] = useState(0);
 
   useEffect(() => {
     setStaffVersion(v => v + 1);
   }, [data.reloadVersion]);
+
+  const enrichKpiWithBranchNames = useCallback(
+    (rows) =>
+      rows.map((s) => {
+        const b = data.branches.find((br) => br.id === s.branch_id);
+        return { ...s, branch_name: b ? b.name : "" };
+      }),
+    [data.branches]
+  );
+
+  const loadWeekTransfer = useCallback(async () => {
+    const res = await api.getKpiWeekReport(weekRange.from, weekRange.to);
+    setWeekKpi(enrichKpiWithBranchNames(res));
+  }, [weekRange, enrichKpiWithBranchNames]);
+
+  const loadMonthTransfer = useCallback(async () => {
+    const res = await api.getKpiReport(month);
+    setMonthKpi(enrichKpiWithBranchNames(res));
+  }, [month, enrichKpiWithBranchNames]);
+
+  const loadSalaryTransfer = useCallback(
+    async ({ silent = false } = {}) => {
+      if (salaryTransferBranchId == null) return;
+      if (!silent) setSalaryTransferLoading(true);
+      try {
+        const list = await api.getSalaryReport(month, salaryTransferBranchId);
+        setSalaryTransferRows(list);
+      } catch (err) {
+        console.error(err);
+        setSalaryTransferRows([]);
+      } finally {
+        if (!silent) setSalaryTransferLoading(false);
+      }
+    },
+    [month, salaryTransferBranchId]
+  );
 
   useEffect(() => {
     if (activeTab === "overview") {
@@ -232,36 +303,57 @@ export function DashboardPage({ data }) {
         });
     } else if (activeTab === "transfer") {
       setLoading(true);
-      api.getKpiWeekReport(weekRange.from, weekRange.to)
-        .then(res => {
-          const enriched = res.map(s => {
-            const b = data.branches.find(br => br.id === s.branch_id);
-            return { ...s, branch_name: b ? b.name : "" };
-          });
-          setWeekKpi(enriched);
-          setLoading(false);
-        })
-        .catch(err => {
-          console.error(err);
-          setLoading(false);
-        });
+      loadWeekTransfer()
+        .catch((err) => console.error(err))
+        .finally(() => setLoading(false));
     } else if (activeTab === "transfer_month") {
       setLoading(true);
-      api.getKpiReport(month)
-        .then(res => {
-          const enriched = res.map(s => {
-            const b = data.branches.find(br => br.id === s.branch_id);
-            return { ...s, branch_name: b ? b.name : "" };
-          });
-          setMonthKpi(enriched);
-          setLoading(false);
-        })
-        .catch(err => {
-          console.error(err);
-          setLoading(false);
-        });
+      loadMonthTransfer()
+        .catch((err) => console.error(err))
+        .finally(() => setLoading(false));
+    } else if (activeTab === "salary_transfer") {
+      loadSalaryTransfer({ silent: false });
     }
-  }, [month, weekRange, activeTab, data.branches, staffVersion]);
+  }, [month, weekRange, activeTab, data.branches, staffVersion, loadWeekTransfer, loadMonthTransfer, loadSalaryTransfer]);
+
+  useEffect(() => {
+    setSalaryTransferBranchId((prev) => {
+      if (prev != null && data?.branches?.some((b) => b.id === prev)) return prev;
+      return (selectedBranchId || data?.branches?.[0]?.id) ?? null;
+    });
+  }, [selectedBranchId, data?.branches]);
+
+  /** Luôn làm mới dữ liệu khi đang xem một trong các bảng chuyển khoản (không cần F5). */
+  useEffect(() => {
+    if (activeTab === "transfer") {
+      const id = setInterval(() => {
+        loadWeekTransfer().catch((err) => console.error(err));
+      }, TRANSFER_TABLE_POLL_MS);
+      return () => clearInterval(id);
+    }
+    if (activeTab === "transfer_month") {
+      const id = setInterval(() => {
+        loadMonthTransfer().catch((err) => console.error(err));
+      }, TRANSFER_TABLE_POLL_MS);
+      return () => clearInterval(id);
+    }
+    if (activeTab === "salary_transfer") {
+      const id = setInterval(() => {
+        loadSalaryTransfer({ silent: true });
+      }, TRANSFER_TABLE_POLL_MS);
+      return () => clearInterval(id);
+    }
+    return undefined;
+  }, [activeTab, loadWeekTransfer, loadMonthTransfer, loadSalaryTransfer]);
+
+  const salaryTransferMain = useMemo(
+    () => salaryTransferRows.filter((r) => r.type === "main"),
+    [salaryTransferRows]
+  );
+  const salaryTransferAssistant = useMemo(
+    () => salaryTransferRows.filter((r) => r.type === "assistant"),
+    [salaryTransferRows]
+  );
 
   const activeStaff = data.staff.filter((s) => s.status === "working").length;
   const mainStaff = data.staff.filter((s) => s.type === "main").length;
@@ -402,6 +494,13 @@ export function DashboardPage({ data }) {
           >
             Bảng chuyển khoản KPI tháng
           </button>
+          <button
+            type="button"
+            className={activeTab === "salary_transfer" ? "attendance-tab active" : "attendance-tab"}
+            onClick={() => setActiveTab("salary_transfer")}
+          >
+            Bảng chuyển khoản lương tháng
+          </button>
         </div>
       </div>
 
@@ -489,7 +588,7 @@ export function DashboardPage({ data }) {
             ))}
           </div>
         </div>
-      ) : (
+      ) : activeTab === "transfer_month" ? (
         <div className="salary-transfer-container">
           <div className="card" style={{ marginBottom: 20 }}>
             <div className="page-header" style={{ marginBottom: 0 }}>
@@ -506,6 +605,51 @@ export function DashboardPage({ data }) {
               <KpiTransferTable key={idx} {...t} />
             ))}
           </div>
+        </div>
+      ) : (
+        <div className="salary-transfer-container">
+          <div className="card" style={{ marginBottom: 20 }}>
+            <div className="page-header" style={{ marginBottom: 0, flexWrap: "wrap", gap: 12 }}>
+              <h3 style={{ margin: 0 }}>Chuyển khoản lương theo chi nhánh</h3>
+              <div className="row" style={{ margin: 0, alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+                <div className="field" style={{ marginBottom: 0 }}>
+                  <label className="muted" style={{ marginRight: 8 }}>Tháng:</label>
+                  <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
+                </div>
+                <div className="field" style={{ marginBottom: 0 }}>
+                  <label className="muted" style={{ marginRight: 8 }}>Chi nhánh:</label>
+                  <select
+                    value={salaryTransferBranchId ?? ""}
+                    onChange={(e) => setSalaryTransferBranchId(Number(e.target.value))}
+                    disabled={!data?.branches?.length}
+                  >
+                    {(data?.branches || []).map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <span className="muted">
+                  {salaryTransferLoading ? "Đang tải..." : `Đã tải ${salaryTransferRows.length} nhân viên`}
+                </span>
+              </div>
+            </div>
+          </div>
+          {!data?.branches?.length ? (
+            <div className="card">
+              <p className="muted">Chưa có chi nhánh — thêm chi nhánh ở mục Quản lý chi nhánh để dùng bảng chuyển khoản.</p>
+            </div>
+          ) : salaryTransferRows.length === 0 && !salaryTransferLoading ? (
+            <div className="card">
+              <p className="muted">Không có nhân viên trong phạm vi tháng này cho chi nhánh đã chọn.</p>
+            </div>
+          ) : (
+            <>
+              <SalaryTransferMonthTable title="Thợ chính" staffList={salaryTransferMain} />
+              <SalaryTransferMonthTable title="Thợ phụ" staffList={salaryTransferAssistant} />
+            </>
+          )}
         </div>
       )}
     </>

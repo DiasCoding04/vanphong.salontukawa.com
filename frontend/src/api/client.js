@@ -29,6 +29,7 @@ export function getCccdImageUrl(staffId) {
 export const api = {
   getBranches: () => request(`/branches?_t=${Date.now()}`),
   createBranch: (payload) => request("/branches", { method: "POST", body: JSON.stringify(payload) }),
+  updateBranch: (id, payload) => request(`/branches/${id}`, { method: "PUT", body: JSON.stringify(payload) }),
   deleteBranch: (branchId, force = false) => request(`/branches/${branchId}${force ? "?force=true" : ""}`, { method: "DELETE" }),
   getStaff: () => request(`/staff?_t=${Date.now()}`),
   createStaff: (payload) => request("/staff", { method: "POST", body: JSON.stringify(payload) }),
